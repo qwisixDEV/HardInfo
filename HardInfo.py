@@ -11,10 +11,12 @@ import ctypes
 import logging
 import tkinter as tk
 import psutil
+import winreg
 from tkinter import messagebox
 
 APP_VERSION = "0.0.1"
-# --- ДИАГНОСТИКА АВТОЗАГРУЗКИ (БЕЗ F-STRINGS) ---
+
+# --- ДИАГНОСТИКА АВТОЗАГРУЗКИ ---
 def log_startup_debug():
     try:
         if "__compiled__" in dir() or getattr(sys, 'frozen', False):
@@ -31,9 +33,6 @@ def log_startup_debug():
             f.write("  os.getcwd(): " + str(os.getcwd()) + "\n")
             f.write("  __compiled__: " + str("__compiled__" in dir()) + "\n")
             f.write("  sys.frozen: " + str(getattr(sys, 'frozen', False)) + "\n")
-            has_startup = "--startup" in sys.argv
-            has_silent = "--silent" in sys.argv
-            f.write("  Аргументы: --startup=" + str(has_startup) + ", --silent=" + str(has_silent) + "\n")
     except Exception:
         pass
 
@@ -79,27 +78,45 @@ COLOR_ACCENT_GREEN = "#00FF66"# Зеленый неон (Система / Здо
 COLOR_ACCENT_RED = "#FF3366"  # Красный неон (Нагрузка / Внимание / Откат)
 
 GPU_DATABASE = {
+
+    # ===== NVIDIA RTX 50 (Blackwell, 2025) =====
+    "RTX 5090": {"chip": "GB202", "nm": "4 nm", "shaders": "21760", "tmus": "680", "rops": "176", "bus": "512-bit", "apis": "DX12.2, Vulkan, CUDA, OpenCL"},
+    "RTX 5080": {"chip": "GB203", "nm": "4 nm", "shaders": "10752", "tmus": "336", "rops": "112", "bus": "256-bit", "apis": "DX12.2, Vulkan, CUDA, OpenCL"},
+    "RTX 5070 Ti": {"chip": "GB203", "nm": "4 nm", "shaders": "8960", "tmus": "280", "rops": "96", "bus": "256-bit", "apis": "DX12.2, Vulkan, CUDA, OpenCL"},
+    "RTX 5070": {"chip": "GB205", "nm": "4 nm", "shaders": "6144", "tmus": "192", "rops": "80", "bus": "192-bit", "apis": "DX12.2, Vulkan, CUDA, OpenCL"},
+    "RTX 5060 Ti": {"chip": "GB206", "nm": "4 nm", "shaders": "4608", "tmus": "144", "rops": "48", "bus": "128-bit", "apis": "DX12.2, Vulkan, CUDA, OpenCL"},
+    "RTX 5060": {"chip": "GB206", "nm": "4 nm", "shaders": "3840", "tmus": "120", "rops": "48", "bus": "128-bit", "apis": "DX12.2, Vulkan, CUDA, OpenCL"},
+    "RTX 5050": {"chip": "GB207", "nm": "4 nm", "shaders": "2560", "tmus": "80", "rops": "32", "bus": "128-bit", "apis": "DX12.2, Vulkan, CUDA, OpenCL"},
+
+    # ===== NVIDIA RTX 40 (Ada Lovelace, 2022–2024) =====
+    "RTX 4090 D": {"chip": "AD102", "nm": "4 nm", "shaders": "14592", "tmus": "456", "rops": "176", "bus": "384-bit", "apis": "DX12.2, Vulkan, CUDA, OpenCL"},
     "RTX 4090": {"chip": "AD102", "nm": "4 nm", "shaders": "16384", "tmus": "512", "rops": "176", "bus": "384-bit", "apis": "DX12.2, Vulkan, CUDA, OpenCL"},
+    "RTX 4080 SUPER": {"chip": "AD103", "nm": "4 nm", "shaders": "10240", "tmus": "320", "rops": "112", "bus": "256-bit", "apis": "DX12.2, Vulkan, CUDA, OpenCL"},
     "RTX 4080": {"chip": "AD103", "nm": "4 nm", "shaders": "9728", "tmus": "304", "rops": "112", "bus": "256-bit", "apis": "DX12.2, Vulkan, CUDA, OpenCL"},
+    "RTX 4070 Ti SUPER": {"chip": "AD103", "nm": "4 nm", "shaders": "8448", "tmus": "264", "rops": "96", "bus": "256-bit", "apis": "DX12.2, Vulkan, CUDA, OpenCL"},
     "RTX 4070 Ti": {"chip": "AD104", "nm": "4 nm", "shaders": "7680", "tmus": "240", "rops": "80", "bus": "192-bit", "apis": "DX12.2, Vulkan, CUDA, OpenCL"},
+    "RTX 4070 SUPER": {"chip": "AD104", "nm": "4 nm", "shaders": "7168", "tmus": "224", "rops": "80", "bus": "192-bit", "apis": "DX12.2, Vulkan, CUDA, OpenCL"},
     "RTX 4070": {"chip": "AD104", "nm": "4 nm", "shaders": "5888", "tmus": "184", "rops": "64", "bus": "192-bit", "apis": "DX12.2, Vulkan, CUDA, OpenCL"},
     "RTX 4060 Ti": {"chip": "AD106", "nm": "4 nm", "shaders": "4352", "tmus": "136", "rops": "48", "bus": "128-bit", "apis": "DX12.2, Vulkan, CUDA, OpenCL"},
     "RTX 4060": {"chip": "AD107", "nm": "4 nm", "shaders": "3072", "tmus": "96", "rops": "48", "bus": "128-bit", "apis": "DX12.2, Vulkan, CUDA, OpenCL"},
     "RTX 4050": {"chip": "AD107", "nm": "4 nm", "shaders": "2560", "tmus": "80", "rops": "48", "bus": "96-bit", "apis": "DX12.2, Vulkan, CUDA, OpenCL"},
+
+    # ===== NVIDIA RTX 30 (Ampere, 2020–2022) =====
     "RTX 3090": {"chip": "GA102", "nm": "8 nm", "shaders": "10496", "tmus": "328", "rops": "112", "bus": "384-bit", "apis": "DX12.2, Vulkan, CUDA, OpenCL"},
     "RTX 3080": {"chip": "GA102", "nm": "8 nm", "shaders": "8704", "tmus": "272", "rops": "96", "bus": "320-bit", "apis": "DX12.2, Vulkan, CUDA, OpenCL"},
     "RTX 3070": {"chip": "GA104", "nm": "8 nm", "shaders": "5888", "tmus": "184", "rops": "96", "bus": "256-bit", "apis": "DX12.2, Vulkan, CUDA, OpenCL"},
     "RTX 3060 Ti": {"chip": "GA104", "nm": "8 nm", "shaders": "4864", "tmus": "152", "rops": "80", "bus": "256-bit", "apis": "DX12.2, Vulkan, CUDA, OpenCL"},
     "RTX 3060": {"chip": "GA106", "nm": "8 nm", "shaders": "3584", "tmus": "112", "rops": "48", "bus": "192-bit", "apis": "DX12.2, Vulkan, CUDA, OpenCL"},
     "RTX 3050": {"chip": "GA106", "nm": "8 nm", "shaders": "2560", "tmus": "80", "rops": "32", "bus": "128-bit", "apis": "DX12.2, Vulkan, CUDA, OpenCL"},
+
+    # ===== NVIDIA GTX 16 (Turing, 2019) =====
     "GTX 1660": {"chip": "TU116", "nm": "12 nm", "shaders": "1408", "tmus": "88", "rops": "48", "bus": "192-bit", "apis": "DX12, Vulkan, CUDA, OpenCL"},
     "GTX 1650": {"chip": "TU117", "nm": "12 nm", "shaders": "896", "tmus": "56", "rops": "32", "bus": "128-bit", "apis": "DX12, Vulkan, CUDA, OpenCL"},
 }
 
 SUSPEND_LIST = [
-    "chrome.exe", "msedge.exe", "browser.exe", "discord.exe", 
-    "onedrive.exe", "spotify.exe", "epicgameslauncher.exe", 
-    "origin.exe"
+    "onedrive.exe", "epicgameslauncher.exe", 
+    "origin.exe", "spotify.exe"
 ]
 
 def is_admin():
@@ -121,23 +138,6 @@ def set_windows_exe_icon(root_window):
     except Exception:
         pass
 
-class TkinterLogHandler(logging.Handler):
-    def __init__(self, text_widget):
-        super().__init__()
-        self.text_widget = text_widget
-
-    def emit(self, record):
-        msg = self.format(record)
-        def append():
-            try:
-                self.text_widget.config(state=tk.NORMAL)
-                self.text_widget.insert(tk.END, msg + "\n")
-                self.text_widget.config(state=tk.DISABLED)
-                self.text_widget.see(tk.END)
-            except Exception:
-                pass
-        self.text_widget.after(0, append)
-
 def decode_output(raw_bytes):
     for encoding in ['utf-16', 'utf-16-le', 'utf-8-sig', 'utf-8', 'cp866', 'cp1251']:
         try:
@@ -147,7 +147,6 @@ def decode_output(raw_bytes):
     return raw_bytes.decode('utf-8', errors='ignore').strip()
 
 def ps_command(script):
-    """Формирует команду для PowerShell с принудительным UTF-8 и обходом политик"""
     clean_script = script.replace('"', '\\"').replace('\n', ' ')
     return f'powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8; {clean_script}"'
 
@@ -155,7 +154,12 @@ def query_wmi_json(cmd, timeout=8):
     try:
         res = subprocess.run(cmd, capture_output=True, shell=True, timeout=timeout)
         if res.returncode == 0 and res.stdout:
-            decoded_text = decode_output(res.stdout)
+            decoded_text = decode_output(res.stdout).strip()
+            if not decoded_text:
+                return []
+            # Проверка структуры вывода перед десериализацией
+            if not (decoded_text.startswith('{') or decoded_text.startswith('[')):
+                return []
             data = json.loads(decoded_text)
             if isinstance(data, dict):
                 return [data]
@@ -166,15 +170,18 @@ def query_wmi_json(cmd, timeout=8):
                 logging.error(f"WMI Error [Code {res.returncode}]: {err}")
     except subprocess.TimeoutExpired:
         logging.error(f"WMI Timeout expired for command: {cmd}")
+    except json.JSONDecodeError as jde:
+        logging.warning(f"WMI JSON decoding failed: {jde}")
     except Exception as e:
         logging.error(f"Unexpected WMI parsing error: {str(e)}")
     return []
 
+# --- ДИАГНОСТИЧЕСКИЕ И СПРАВОЧНЫЕ МЕТОДЫ ---
+
 def get_cpu_name_windows():
     try:
-        import winreg
-        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
-        name, _ = winreg.QueryValueEx(key, "ProcessorNameString")
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0") as key:
+            name, _ = winreg.QueryValueEx(key, "ProcessorNameString")
         return name.strip()
     except Exception as e:
         logging.warning(f"Failed to read CPU from registry: {e}")
@@ -207,7 +214,7 @@ def get_cpu_temp_windows():
     except Exception:
         pass
         
-    return "Н/Д (Нужен HWiNFO)"
+    return "Н/Д"
 
 def get_system_uptime():
     try:
@@ -216,11 +223,10 @@ def get_system_uptime():
         days = uptime_seconds // 86400
         hours = (uptime_seconds % 86400) // 3600
         minutes = (uptime_seconds % 3600) // 60
-        seconds = uptime_seconds % 60
         
         if days > 0:
-            return f"{days}дн. {hours}ч. {minutes}мин. {seconds}сек."
-        return f"{hours}ч. {minutes}мин. {seconds}сек."
+            return f"{days}дн. {hours}ч. {minutes}мин."
+        return f"{hours}ч. {minutes}мин."
     except Exception as e:
         logging.error(f"Uptime calculator failed: {e}")
         return "Н/Д"
@@ -279,7 +285,14 @@ def get_disk_health_windows():
                     except: pass
                 raw_status = str(disk.get("HealthStatus", "Unknown")).strip()
                 status_ru = status_map.get(raw_status, raw_status)
-                disks.append({"name": disk.get("FriendlyName", "Накопитель"), "type": disk.get("MediaType", "SSD/HDD"), "status": status_ru, "temp": f"{temp}°C" if temp is not None and temp > 0 else "Н/Д", "health": health_percent, "admin": True})
+                disks.append({
+                    "name": disk.get("FriendlyName", "Накопитель"), 
+                    "type": disk.get("MediaType", "SSD/HDD"), 
+                    "status": status_ru, 
+                    "temp": f"{temp}°C" if temp is not None and temp > 0 else "Н/Д", 
+                    "health": health_percent, 
+                    "admin": True
+                })
     except Exception as e:
         logging.error(f"Error in Get-PhysicalDisk query: {e}")
 
@@ -292,8 +305,16 @@ def get_disk_health_windows():
                 size_gb = f"{int(size_bytes) // (1024**3)} GB" if size_bytes else "Н/Д"
                 raw_status = str(item.get("Status", "Unknown")).lower().strip()
                 status_ru = status_map.get(raw_status, raw_status)
-                disks.append({"name": item.get("Model", "Накопитель"), "type": size_gb, "status": status_ru, "temp": "Н/Д", "health": "Н/Д", "admin": False})
-        except: pass
+                disks.append({
+                    "name": item.get("Model", "Накопитель"), 
+                    "type": size_gb, 
+                    "status": status_ru, 
+                    "temp": "Н/Д", 
+                    "health": "Н/Д", 
+                    "admin": False
+                })
+        except Exception as e:
+            logging.error(f"Fallback disk scan failed: {e}")
     return disks
 
 def get_nvidia_detailed_sensors():
@@ -307,8 +328,8 @@ def get_nvidia_detailed_sensors():
             parts = [p.strip() for p in decoded.split(',')]
             if len(parts) >= 9:
                 return {"temp": f"{parts[0]}°C", "fan": f"{parts[1]}%" if parts[1] != "[Not Supported]" else "Н/Д", "power": f"{parts[2]} Вт" if parts[2] != "[Not Supported]" else "Н/Д", "gpu_load": f"{parts[3]}%", "mem_load": f"{parts[4]}%", "core_clock": f"{parts[5]} МГц", "mem_clock": f"{parts[6]} МГц", "driver": parts[7], "vbios": parts[8], "success": True}
-    except Exception:
-        pass
+    except Exception as e:
+        logging.warning(f"Failed to query NVIDIA detailed sensors: {e}")
     return {"success": False}
 
 def get_gpu_vram_nvidia():
@@ -320,36 +341,39 @@ def get_gpu_vram_nvidia():
         if res.returncode == 0 and res.stdout:
             mb = int(decode_output(res.stdout).strip())
             return mb
-    except Exception:
-        pass
+    except Exception as e:
+        logging.warning(f"Failed to query NVIDIA total VRAM: {e}")
     return None
+
+# --- ПРОВЕРКА СОСТОЯНИЯ СИСТЕМЫ (АУДИТ) ---
 
 def check_vbs_status():
     try:
         cmd = ps_command('Get-CimInstance -ClassName Win32_DeviceGuard | Select-Object -ExpandProperty SecurityServicesRunning')
         res = subprocess.run(cmd, capture_output=True, shell=True, timeout=5)
-        text = decode_output(res.stdout)
-        if "2" in text: return "Включена (Снижает FPS)"
-        return "Отключена (Оптимально)"
+        text = decode_output(res.stdout).strip()
+        if text:
+            val = int(text)
+            if val & 2:
+                return "Включена (Снижает FPS)"
+        return "Отключена"
     except Exception as e:
         logging.error(f"Failed to check VBS status: {e}")
         return "Н/Д"
 
 def check_mitigations_status():
     try:
-        import winreg
-        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management")
-        val, _ = winreg.QueryValueEx(key, "FeatureSettingsOverride")
-        return "Отключены (Макс. FPS)" if val == 3 else "Включены (Защита)"
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management") as key:
+            val, _ = winreg.QueryValueEx(key, "FeatureSettingsOverride")
+        return "Отключены" if val == 3 else "Включены (Защита)"
     except Exception:
         return "Включены (Защита)"
 
 def check_game_mode_status():
     try:
-        import winreg
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\GameBar")
-        val, _ = winreg.QueryValueEx(key, "AllowAutoGameMode")
-        return "Включен (Игровой)" if val == 1 else "Отключен"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\GameBar") as key:
+            val, _ = winreg.QueryValueEx(key, "AllowAutoGameMode")
+        return "Включен" if val == 1 else "Отключен"
     except Exception:
         return "Отключен"
 
@@ -358,11 +382,48 @@ def check_power_plan_status():
         cmd = 'powercfg /getactivescheme'
         res = subprocess.run(cmd, capture_output=True, shell=True, timeout=5)
         text = decode_output(res.stdout)
-        if "Высокая производительность" in text or "High performance" in text: return "Высокая производительность"
-        elif "Максимальная производительность" in text or "Ultimate performance" in text: return "Максимальная производительность"
-        else: return "Сбалансированная (Снижает частоту)"
+        if "Высокая производительность" in text or "High performance" in text: return "Высокая"
+        elif "Максимальная производительность" in text or "Ultimate performance" in text: return "Максимальная"
+        else: return "Сбалансированная"
     except Exception:
         return "Сбалансированная"
+
+def check_hags_status():
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\GraphicsDrivers") as key:
+            val, _ = winreg.QueryValueEx(key, "HwSchMode")
+        return "Активирован" if val == 2 else "Отключен"
+    except Exception:
+        return "Отключен"
+
+def check_memory_compression_status():
+    try:
+        cmd = ps_command('Get-MMAgent | Select-Object -ExpandProperty MemoryCompression')
+        res = subprocess.run(cmd, capture_output=True, shell=True, timeout=5)
+        text = decode_output(res.stdout).lower()
+        if "true" in text: return "Активно"
+        elif "false" in text: return "Отключено"
+        return "Н/Д"
+    except Exception:
+        return "Н/Д"
+
+def check_power_throttling_status():
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Power\PowerThrottling") as key:
+            val, _ = winreg.QueryValueEx(key, "PowerThrottlingOff")
+        return "Отключено" if val == 1 else "Включено"
+    except Exception:
+        return "Включено"
+
+# --- МЕТОДЫ СИСТЕМНОЙ ОПТИМИЗАЦИИ ---
+
+def get_steam_path():
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as key:
+            val, _ = winreg.QueryValueEx(key, "SteamPath")
+        return val.replace("/", "\\")
+    except Exception:
+        return None
 
 def run_restore_point_creation():
     try:
@@ -408,14 +469,74 @@ def run_process_priority_boost():
     except Exception as e:
         return False, str(e)
 
+def run_enable_hags():
+    try:
+        cmd = r'reg add "HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" /v "HwSchMode" /t REG_DWORD /d 2 /f'
+        res = subprocess.run(cmd, shell=True, capture_output=True, timeout=5)
+        if res.returncode == 0:
+            logging.info("HAGS успешно активирован в реестре.")
+            return True, "Аппаратное ускорение GPU (HAGS) активировано.\nИзменения вступят в силу после перезагрузки."
+        return False, decode_output(res.stderr)
+    except Exception as e:
+        logging.error(f"Ошибка изменения параметра HAGS: {e}")
+        return False, str(e)
+
+def run_disable_memory_compression():
+    try:
+        cmd = ps_command("Disable-MMAgent -MemoryCompression")
+        res = subprocess.run(cmd, shell=True, capture_output=True, timeout=8)
+        if res.returncode == 0:
+            logging.info("Сжатие памяти отключено.")
+            return True, "Сжатие ОЗУ успешно отключено.\nПроцессор освобожден от сжатия данных (рекомендуется перезагрузка)."
+        return False, decode_output(res.stderr)
+    except Exception as e:
+        logging.error(f"Не удалось отключить сжатие памяти: {e}")
+        return False, str(e)
+
+def run_disable_power_throttling():
+    try:
+        cmd_key = r'reg add "HKLM\SYSTEM\CurrentControlSet\Control\Power\PowerThrottling" /f'
+        subprocess.run(cmd_key, shell=True, capture_output=True, timeout=5)
+        
+        cmd_val = r'reg add "HKLM\SYSTEM\CurrentControlSet\Control\Power\PowerThrottling" /v "PowerThrottlingOff" /t REG_DWORD /d 1 /f'
+        res = subprocess.run(cmd_val, shell=True, capture_output=True, timeout=5)
+        
+        if res.returncode == 0:
+            logging.info("Технология Power Throttling отключена.")
+            return True, "Ограничение питания (Power Throttling) отключено.\nСистема не будет искусственно замедлять фоновые задачи."
+        return False, decode_output(res.stderr)
+    except Exception as e:
+        logging.error(f"Ошибка отключения Power Throttling: {e}")
+        return False, str(e)
+
+def run_disable_core_parking():
+    try:
+        cmd_min = 'powercfg /SETACVALUEINDEX SCHEME_CURRENT SUB_PROCESSOR CPMINCORES 100'
+        cmd_max = 'powercfg /SETDCVALUEINDEX SCHEME_CURRENT SUB_PROCESSOR CPMINCORES 100'
+        cmd_apply = 'powercfg /SETACTIVE SCHEME_CURRENT'
+        
+        subprocess.run(cmd_min, shell=True, capture_output=True, timeout=5)
+        subprocess.run(cmd_max, shell=True, capture_output=True, timeout=5)
+        subprocess.run(cmd_apply, shell=True, capture_output=True, timeout=5)
+        
+        logging.info("Core Parking успешно отключен.")
+        return True, "Парковка ядер CPU отключена.\nВсе ядра зафиксированы в активном режиме для устранения задержек."
+    except Exception as e:
+        logging.error(f"Ошибка отключения Core Parking: {e}")
+        return False, str(e)
+
 def run_net_optimization():
     try:
         cmd_throttle = r'reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" /v "NetworkThrottlingIndex" /t REG_DWORD /d 4294967295 /f'
         subprocess.run(cmd_throttle, shell=True, capture_output=True, timeout=5)
-        winmm = ctypes.WinDLL('winmm.dll')
-        winmm.timeBeginPeriod(1)
-        # ИСПРАВЛЕНО: Добавлен префикс r для raw string
-        cmd_get_interfaces = ps_command(r'Get-ChildItem -Path HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces | Select-Object -ExpandProperty Name')
+        try:
+            winmm = ctypes.WinDLL('winmm.dll')
+            winmm.timeBeginPeriod(1)
+        except Exception as e:
+            logging.error(f"Failed to set timeBeginPeriod: {e}")
+        
+        # Исправлен баг: Использование PSChildName вместо Name возвращает только чистые GUID интерфейсов
+        cmd_get_interfaces = ps_command(r'Get-ChildItem -Path HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces | Select-Object -ExpandProperty PSChildName')
         res = subprocess.run(cmd_get_interfaces, shell=True, capture_output=True, timeout=8)
         if res.returncode == 0 and res.stdout:
             interfaces = decode_output(res.stdout).split('\n')
@@ -427,7 +548,7 @@ def run_net_optimization():
                     subprocess.run(cmd_ack, shell=True, capture_output=True, timeout=5)
                     subprocess.run(cmd_nodelay, shell=True, capture_output=True, timeout=5)
         logging.info("Сетевые таймеры TCPNoDelay успешно применены ко всем интерфейсам.")
-        return True, "Локальные таймеры задержки TCP и приоритеты планировщика сети успешно настроены"
+        return True, "Таймеры задержки TCP и приоритеты сети оптимизированы"
     except Exception as e:
         logging.error(f"Не удалось оптимизировать сеть: {e}")
         return False, str(e)
@@ -440,32 +561,96 @@ def run_cpu_mitigations_toggle(disable=True):
         subprocess.run(cmd_1, shell=True, capture_output=True, timeout=5)
         subprocess.run(cmd_2, shell=True, capture_output=True, timeout=5)
         logging.info(f"Переключатель патчей Spectre/Meltdown выставлен в: {disable}")
-        return True, "Изменения применены. Потребуется перезагрузка компьютера."
+        return True, "Изменения применены. Требуется перезагрузка системы."
     except Exception as e:
         logging.error(f"Ошибка изменения уязвимостей процессора: {e}")
         return False, str(e)
 
+def run_pc_gaming_optimizations(process_name="dota2.exe"):
+    success_steps = []
+    failed_steps = []
+
+    # 1. Приоритет процесса в реестре (IFEO)
+    try:
+        proc = process_name.lower().strip()
+        if not proc.endswith(".exe"):
+            proc += ".exe"
+        key_path = rf"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\{proc}\PerfOptions"
+        with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, key_path, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, "CpuPriorityClass", 0, winreg.REG_DWORD, 3)  # 3 = High Priority
+        success_steps.append(f"Аппаратный приоритет {proc} зафиксирован на Высокий (IFEO)")
+    except Exception as e:
+        failed_steps.append(f"Приоритет процесса {process_name}: {e}")
+
+    # 2. Оптимизация квантов планировщика Windows
+    try:
+        key_path = r"SYSTEM\CurrentControlSet\Control\PriorityControl"
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, "Win32PrioritySeparation", 0, winreg.REG_DWORD, 26)  # 26 (0x1A) - игровой квант
+        success_steps.append("Кванты CPU оптимизированы на активное окно")
+    except Exception as e:
+        failed_steps.append(f"Кванты планировщика CPU: {e}")
+
+    # 3. Блокировка энергосбережения PCIe ASPM
+    try:
+        cmd_ac = 'powercfg /SETACVALUEINDEX SCHEME_CURRENT SUB_PCIEXPRESS ASPM 0'
+        cmd_dc = 'powercfg /SETDCVALUEINDEX SCHEME_CURRENT SUB_PCIEXPRESS ASPM 0'
+        cmd_apply = 'powercfg /SETACTIVE SCHEME_CURRENT'
+        
+        subprocess.run(cmd_ac, shell=True, capture_output=True, timeout=5)
+        subprocess.run(cmd_dc, shell=True, capture_output=True, timeout=5)
+        subprocess.run(cmd_apply, shell=True, capture_output=True, timeout=5)
+        success_steps.append("Энергосбережение шины PCIe отключено (ASPM Off)")
+    except Exception as e:
+        failed_steps.append(f"Энергосбережение PCIe: {e}")
+
+    # 4. Исключение каталога Steam из Defender
+    steam_path = get_steam_path()
+    if steam_path:
+        try:
+            ps_cmd = f"Add-MpPreference -ExclusionPath '{steam_path}'"
+            cmd = ps_command(ps_cmd)
+            res = subprocess.run(cmd, shell=True, capture_output=True, timeout=10)
+            if res.returncode == 0:
+                success_steps.append("Папка Steam добавлена в исключения Защитника")
+            else:
+                failed_steps.append("Не удалось добавить Steam в исключения Защитника")
+        except Exception as e:
+            failed_steps.append(f"Исключения Defender: {e}")
+    else:
+        failed_steps.append("Путь к Steam не найден в реестре")
+
+    # 5. Запрет выгрузки ядра системы в файл подкачки
+    try:
+        key_path = r"SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management"
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, "DisablePagingExecutive", 0, winreg.REG_DWORD, 1)
+        success_steps.append("Ядро системы заблокировано в ОЗУ (DisablePagingExecutive)")
+    except Exception as e:
+        failed_steps.append(f"Блокировка ядра в ОЗУ: {e}")
+
+    report = "Применены следующие аппаратные оптимизации:\n" + "\n".join([f"✓ {s}" for s in success_steps])
+    if failed_steps:
+        report += "\n\nНе применены:\n" + "\n".join([f"✗ {f}" for f in failed_steps])
+        return False, report
+    return True, report
+
+# Безопасный метод оптимизации планирования фонового софта без принудительной выгрузки ОЗУ
 def run_ram_working_set_clean():
     try:
         count = 0
-        PROCESS_QUERY_INFORMATION = 0x0400
-        PROCESS_SET_QUOTA = 0x0100
-        for proc in psutil.process_iter(['pid', 'name']):
+        background_apps = ["chrome.exe", "msedge.exe", "spotify.exe", "discord.exe"]
+        for proc in psutil.process_iter(['name', 'pid']):
             try:
-                handle = ctypes.windll.kernel32.OpenProcess(
-                    PROCESS_QUERY_INFORMATION | PROCESS_SET_QUOTA, 
-                    False, 
-                    proc.info['pid']
-                )
-                if handle:
-                    ctypes.windll.psapi.EmptyWorkingSet(handle)
-                    ctypes.windll.kernel32.CloseHandle(handle)
+                if proc.info['name'].lower() in background_apps:
+                    p = psutil.Process(proc.info['pid'])
+                    p.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
                     count += 1
             except Exception: continue
-        logging.info(f"Memory working sets optimized for {count} processes.")
-        return True, f"ОЗУ сжата для {count} процессов."
+        logging.info(f"Background processes priority optimized: {count}")
+        return True, f"Приоритет планировщика снижен для {count} фоновых процессов."
     except Exception as e:
-        logging.error(f"RAM optimization error: {e}")
+        logging.error(f"Background priority adjustment failed: {e}")
         return False, str(e)
 
 def run_smart_clean():
@@ -484,16 +669,32 @@ def run_smart_clean():
         logging.error(f"Не удалось очистить Temp: {e}")
         return False, str(e)
 
-def run_undo_all_optimization():
+def run_undo_all_optimization(process_name="dota2.exe"):
+    success_steps = []
+    failed_steps = []
+
+    # 1. Откат GameBar и схемы питания
     try:
         cmd_gm = r'reg add "HKCU\Software\Microsoft\GameBar" /v "AllowAutoGameMode" /t REG_DWORD /d 0 /f'
         subprocess.run(cmd_gm, shell=True, capture_output=True, timeout=5)
         cmd_power = 'powercfg /setactive 381b4222-f694-41f0-9685-ff5bb260df2e'
         subprocess.run(cmd_power, shell=True, capture_output=True, timeout=5)
+        success_steps.append("Сброшен Игровой режим и Схема питания")
+    except Exception as e:
+        failed_steps.append(f"Игровой режим/Питание: {e}")
+
+    # 2. Сетевой троттлинг
+    try:
         cmd_throttle = r'reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" /v "NetworkThrottlingIndex" /t REG_DWORD /d 10 /f'
         subprocess.run(cmd_throttle, shell=True, capture_output=True, timeout=5)
-        # ИСПРАВЛЕНО: Добавлен префикс r для raw string
-        cmd_get_interfaces = ps_command(r'Get-ChildItem -Path HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces | Select-Object -ExpandProperty Name')
+        success_steps.append("Сброшен сетевой троттлинг")
+    except Exception as e:
+        failed_steps.append(f"Сеть троттлинг: {e}")
+
+    # 3. Сетевые задержки TCPNoDelay
+    try:
+        # Исправлен баг: Использование PSChildName вместо Name возвращает только чистые GUID интерфейсов
+        cmd_get_interfaces = ps_command(r'Get-ChildItem -Path HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces | Select-Object -ExpandProperty PSChildName')
         res = subprocess.run(cmd_get_interfaces, shell=True, capture_output=True, timeout=8)
         if res.returncode == 0 and res.stdout:
             interfaces = decode_output(res.stdout).split('\n')
@@ -504,19 +705,121 @@ def run_undo_all_optimization():
                     cmd_nodelay = rf'reg delete "HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\{subkey}" /v "TCPNoDelay" /f'
                     subprocess.run(cmd_ack, shell=True, capture_output=True, timeout=5)
                     subprocess.run(cmd_nodelay, shell=True, capture_output=True, timeout=5)
+        success_steps.append("Удалены твики сетевых интерфейсов TCP")
+    except Exception as e:
+        failed_steps.append(f"Сетевые интерфейсы TCP: {e}")
+
+    # 4. Защитные патчи CPU (Spectre/Meltdown)
+    try:
         cmd_mitig_1 = r'reg delete "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" /v "FeatureSettingsOverride" /f'
         cmd_mitig_2 = r'reg delete "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" /v "FeatureSettingsOverrideMask" /f'
         subprocess.run(cmd_mitig_1, shell=True, capture_output=True, timeout=5)
         subprocess.run(cmd_mitig_2, shell=True, capture_output=True, timeout=5)
-        try:
-            winmm = ctypes.WinDLL('winmm.dll')
-            winmm.timeEndPeriod(1)
-        except Exception: pass
-        logging.info("Системные параметры возвращены в стандартные значения Microsoft.")
-        return True, "Все оптимизации успешно отменены. Настройки Windows сброшены."
+        success_steps.append("Патчи уязвимостей CPU возвращены по умолчанию")
     except Exception as e:
-        logging.error(f"Не удалось выполнить откат оптимизаций: {e}")
-        return False, str(e)
+        failed_steps.append(f"Патчи уязвимостей CPU: {e}")
+
+    # 5. Откат HAGS
+    try:
+        cmd = r'reg add "HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" /v "HwSchMode" /t REG_DWORD /d 1 /f'
+        subprocess.run(cmd, shell=True, capture_output=True, timeout=5)
+        success_steps.append("Параметр HAGS сброшен")
+    except Exception as e:
+        failed_steps.append(f"Параметр HAGS: {e}")
+
+    # 6. Включение сжатия памяти
+    try:
+        cmd = ps_command("Enable-MMAgent -MemoryCompression")
+        subprocess.run(cmd, shell=True, capture_output=True, timeout=8)
+        success_steps.append("Сжатие оперативной памяти включено обратно")
+    except Exception as e:
+        failed_steps.append(f"Сжатие памяти: {e}")
+
+    # 7. Включение Power Throttling
+    try:
+        cmd = r'reg delete "HKLM\SYSTEM\CurrentControlSet\Control\Power\PowerThrottling" /v "PowerThrottlingOff" /f'
+        subprocess.run(cmd, shell=True, capture_output=True, timeout=5)
+        success_steps.append("Ограничение питания (Power Throttling) возвращено")
+    except Exception as e:
+        failed_steps.append(f"Ограничение питания: {e}")
+
+    # 8. Парковка ядер CPU
+    try:
+        cmd_ac = 'powercfg /SETACVALUEINDEX SCHEME_CURRENT SUB_PROCESSOR CPMINCORES 5'
+        cmd_dc = 'powercfg /SETDCVALUEINDEX SCHEME_CURRENT SUB_PROCESSOR CPMINCORES 5'
+        cmd_apply = 'powercfg /SETACTIVE SCHEME_CURRENT'
+        subprocess.run(cmd_ac, shell=True, capture_output=True, timeout=5)
+        subprocess.run(cmd_dc, shell=True, capture_output=True, timeout=5)
+        subprocess.run(cmd_apply, shell=True, capture_output=True, timeout=5)
+        success_steps.append("Парковка ядер CPU возвращена в стандартный режим")
+    except Exception as e:
+        failed_steps.append(f"Парковка ядер: {e}")
+
+    # 9. Удаление приоритета IFEO
+    try:
+        proc = process_name.lower().strip()
+        if not proc.endswith(".exe"):
+            proc += ".exe"
+        key_path = rf"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\{proc}"
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path, 0, winreg.KEY_ALL_ACCESS) as key:
+                winreg.DeleteKey(key, "PerfOptions")
+        except OSError: pass
+        winreg.DeleteKey(winreg.HKEY_LOCAL_MACHINE, key_path)
+        success_steps.append(f"Удален приоритет IFEO для {proc}")
+    except Exception as e:
+        failed_steps.append(f"Удаление IFEO: {e}")
+
+    # 10. Кванты планировщика Windows
+    try:
+        key_path = r"SYSTEM\CurrentControlSet\Control\PriorityControl"
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, "Win32PrioritySeparation", 0, winreg.REG_DWORD, 2)
+        success_steps.append("Кванты планировщика сброшены")
+    except Exception as e:
+        failed_steps.append(f"Кванты планировщика: {e}")
+
+    # 11. Энергосбережение PCIe (ASPM по умолчанию = 1)
+    try:
+        subprocess.run('powercfg /SETACVALUEINDEX SCHEME_CURRENT SUB_PCIEXPRESS ASPM 1', shell=True, capture_output=True, timeout=5)
+        subprocess.run('powercfg /SETDCVALUEINDEX SCHEME_CURRENT SUB_PCIEXPRESS ASPM 1', shell=True, capture_output=True, timeout=5)
+        subprocess.run('powercfg /SETACTIVE SCHEME_CURRENT', shell=True, capture_output=True, timeout=5)
+        success_steps.append("Энергосбережение PCIe (ASPM) возвращено по умолчанию")
+    except Exception as e:
+        failed_steps.append(f"Энергосбережение PCIe (ASPM): {e}")
+
+    # 12. Удаление исключения Defender
+    steam_path = get_steam_path()
+    if steam_path:
+        try:
+            ps_cmd = f"Remove-MpPreference -ExclusionPath '{steam_path}'"
+            cmd = ps_command(ps_cmd)
+            subprocess.run(cmd, shell=True, capture_output=True, timeout=10)
+            success_steps.append("Папка Steam удалена из исключений Defender")
+        except Exception as e:
+            failed_steps.append(f"Исключения Defender: {e}")
+
+    # 13. Сброс Disable Paging Executive
+    try:
+        key_path = r"SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management"
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, "DisablePagingExecutive", 0, winreg.REG_DWORD, 0)
+        success_steps.append("Выгрузка ядра системы в pagefile разрешена обратно")
+    except Exception as e:
+        failed_steps.append(f"Выгрузка ядра: {e}")
+
+    # 14. Сброс глобального таймера Windows
+    try:
+        winmm = ctypes.WinDLL('winmm.dll')
+        winmm.timeEndPeriod(1)
+    except Exception:
+        pass
+
+    report = "Откат системных оптимизаций выполнен:\n" + "\n".join([f"✓ {s}" for s in success_steps])
+    if failed_steps:
+        report += "\n\nНе удалось сбросить:\n" + "\n".join([f"✗ {f}" for f in failed_steps])
+        return False, report
+    return True, report
 
 def toggle_background_services(suspend=True):
     action_name = "заморожен" if suspend else "возобновлен"
@@ -554,10 +857,8 @@ class ElegantProgressBar(tk.Canvas):
         fill_width = (percent / 100) * self.width
         if fill_width > 0: self.create_rectangle(0, 0, fill_width, self.height, fill=color, width=0)
 
-# ИСПРАВЛЕННЫЙ КЛАСС: Теперь корректно обрабатывает параметр font
 class HoverButton(tk.Button):
     def __init__(self, parent, text, command, accent_color="#00FFCC", normal_bg="#121216", hover_bg="#22222A", fg="#CCCCCC", **kwargs):
-        # Если шрифт не передан снаружи, устанавливаем дефолтный
         if 'font' not in kwargs:
             kwargs['font'] = ("Segoe UI Semibold", 10)
             
@@ -648,6 +949,11 @@ class HardInfoApp:
     def on_closing(self):
         logging.info("Завершение работы.")
         self.status_var.set("Завершение работы...")
+        try:
+            winmm = ctypes.WinDLL('winmm.dll')
+            winmm.timeEndPeriod(1)
+        except Exception:
+            pass
         if self.apps_suspended:
             try:
                 toggle_background_services(suspend=False)
@@ -662,7 +968,8 @@ class HardInfoApp:
                 try:
                     temp = get_cpu_temp_windows()
                     self.cpu_temp_cache = temp
-                except Exception:
+                except Exception as e:
+                    logging.exception(f"Critical error in bg temperature thread: {e}")
                     self.cpu_temp_cache = "Н/Д"
                 for _ in range(40):
                     if self.stop_event.is_set(): break
@@ -710,11 +1017,17 @@ class HardInfoApp:
         self.refresh_btn.pack(fill="x")
 
     def setup_tabs(self):
+        self.tab_area.rowconfigure(0, weight=1)
+        self.tab_area.columnconfigure(0, weight=1)
+
         self.tab_sys_frame = tk.Frame(self.tab_area, bg=COLOR_BG)
         self.tab_cpu_frame = tk.Frame(self.tab_area, bg=COLOR_BG)
         self.tab_gpu_frame = tk.Frame(self.tab_area, bg=COLOR_BG)
         self.tab_ssd_frame = tk.Frame(self.tab_area, bg=COLOR_BG)
         self.tab_opt_frame = tk.Frame(self.tab_area, bg=COLOR_BG)
+        
+        for frame in (self.tab_sys_frame, self.tab_cpu_frame, self.tab_gpu_frame, self.tab_ssd_frame, self.tab_opt_frame):
+            frame.grid(row=0, column=0, sticky="nsew")
         
         self.build_sys_tab()
         self.build_cpu_tab()
@@ -723,30 +1036,26 @@ class HardInfoApp:
         self.build_opt_tab()
 
     def switch_tab(self, tab_name):
-        self.tab_sys_frame.pack_forget()
-        self.tab_cpu_frame.pack_forget()
-        self.tab_gpu_frame.pack_forget()
-        self.tab_ssd_frame.pack_forget()
-        self.tab_opt_frame.pack_forget()
         self.btn_sys.config(bg=COLOR_SIDEBAR, fg=COLOR_TEXT_PR)
         self.btn_cpu.config(bg=COLOR_SIDEBAR, fg=COLOR_TEXT_PR)
         self.btn_gpu.config(bg=COLOR_SIDEBAR, fg=COLOR_TEXT_PR)
         self.btn_ssd.config(bg=COLOR_SIDEBAR, fg=COLOR_TEXT_PR)
         self.btn_opt.config(bg=COLOR_SIDEBAR, fg=COLOR_TEXT_PR)
+        
         if tab_name == "sys":
-            self.tab_sys_frame.pack(fill="both", expand=True, padx=25, pady=25)
+            self.tab_sys_frame.tkraise()
             self.btn_sys.config(bg=COLOR_CARD, fg=COLOR_ACCENT_GREEN)
         elif tab_name == "cpu":
-            self.tab_cpu_frame.pack(fill="both", expand=True, padx=25, pady=25)
+            self.tab_cpu_frame.tkraise()
             self.btn_cpu.config(bg=COLOR_CARD, fg=COLOR_ACCENT_TEAL)
         elif tab_name == "gpu":
-            self.tab_gpu_frame.pack(fill="both", expand=True, padx=25, pady=25)
+            self.tab_gpu_frame.tkraise()
             self.btn_gpu.config(bg=COLOR_CARD, fg=COLOR_ACCENT_VIOLET)
         elif tab_name == "ssd":
-            self.tab_ssd_frame.pack(fill="both", expand=True, padx=25, pady=25)
+            self.tab_ssd_frame.tkraise()
             self.btn_ssd.config(bg=COLOR_CARD, fg=COLOR_ACCENT_GREEN)
         elif tab_name == "opt":
-            self.tab_opt_frame.pack(fill="both", expand=True, padx=25, pady=25)
+            self.tab_opt_frame.tkraise()
             self.btn_opt.config(bg=COLOR_CARD, fg=COLOR_ACCENT_TEAL)
             self.update_opt_audit()
 
@@ -958,51 +1267,112 @@ class HardInfoApp:
         self.tab_opt_frame.columnconfigure(0, weight=1, uniform="opt_col")
         self.tab_opt_frame.columnconfigure(1, weight=1, uniform="opt_col")
         self.tab_opt_frame.rowconfigure(0, weight=1)
+        
         left_box = tk.Frame(self.tab_opt_frame, bg=COLOR_BG)
         left_box.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        
         right_box = tk.Frame(self.tab_opt_frame, bg=COLOR_BG)
         right_box.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
         
-        audit_card = BeautifulCard(left_box, title="Аудит Безопасности и Системы")
+        # --- ЛЕВАЯ КОЛОНКА: АУДИТ ---
+        audit_card = BeautifulCard(left_box, title="Аудит состояния системы")
         audit_card.pack(fill="both", expand=True)
+        
         self.audit_specs = {}
-        audit_fields = [("Игровой режим Windows:", "aud_gm"), ("Схема электропитания:", "aud_power"), ("Изоляция ядер (VBS):", "aud_vbs"), ("Патчи уязвимостей CPU:", "aud_mitig"), ("Занято кэшем ОЗУ (Standby):", "aud_standby")]
+        audit_fields = [
+            ("Игровой режим Windows:", "aud_gm"),
+            ("Схема электропитания:", "aud_power"),
+            ("Изоляция ядер (VBS):", "aud_vbs"),
+            ("Патчи уязвимостей CPU:", "aud_mitig"),
+            ("Аппаратный HAGS:", "aud_hags"),
+            ("Сжатие памяти ОЗУ:", "aud_comp"),
+            ("Технология Power Throttling:", "aud_throttling"),
+            ("Занято кэшем ОЗУ (Standby):", "aud_standby")
+        ]
+        
         for label, key in audit_fields:
             row = tk.Frame(audit_card, bg=COLOR_CARD)
-            row.pack(fill="x", padx=20, pady=10)
+            row.pack(fill="x", padx=20, pady=7)
             tk.Label(row, text=label, font=("Segoe UI Semibold", 10), fg=COLOR_TEXT_SEC, bg=COLOR_CARD, anchor="w").pack(side="left")
             lbl_v = tk.Label(row, text="Анализ...", font=("Segoe UI Semibold", 10), fg=COLOR_TEXT_PR, bg=COLOR_CARD, anchor="w")
             lbl_v.pack(side="right")
             self.audit_specs[key] = lbl_v
             
         self.uac_box = tk.Frame(audit_card, bg=COLOR_CARD)
-        self.uac_box.pack(fill="x", padx=20, pady=15)
+        self.uac_box.pack(fill="x", padx=20, pady=10)
         self.uac_status_lbl = tk.Label(self.uac_box, text="Загрузка...", font=("Segoe UI Semibold", 9), fg=COLOR_TEXT_SEC, bg=COLOR_CARD, anchor="w")
         self.uac_status_lbl.pack(fill="x", pady=5)
         self.uac_btn = HoverButton(self.uac_box, text="ПЕРЕЗАПУСТИТЬ С ПРАВАМИ АДМИНИСТРАТОРА", command=self.act_request_uac, accent_color=COLOR_ACCENT_RED, normal_bg="#2E1116", hover_bg="#4A1C24", fg="#FF99AA")
         self.uac_btn.pack(fill="x", pady=5)
         
-        boost_card = BeautifulCard(right_box, title="Панель Оптимизации (Game Boost)")
-        boost_card.pack(fill="both", expand=True)
+        # --- ПРАВАЯ КОЛОНКА: СТРОГАЯ ПАНЕЛЬ ОПТИМИЗАЦИЙ ---
         
-        self.btn_point = HoverButton(boost_card, text="1. СОЗДАТЬ ТОЧКУ ВОССТАНОВЛЕНИЯ (РЕКОМЕНДУЕТСЯ)", command=self.act_create_restore, accent_color=COLOR_ACCENT_GREEN)
-        self.btn_point.pack(fill="x", padx=20, pady=5)
-        self.btn_gm = HoverButton(boost_card, text="2. ИГРОВОЙ РЕЖИМ, МАКС. ПИТАНИЕ & PRIORITIES", command=self.act_enable_gamemode, accent_color=COLOR_ACCENT_TEAL)
-        self.btn_gm.pack(fill="x", padx=20, pady=5)
-        self.btn_net = HoverButton(boost_card, text="3. ОПТИМИЗИРОВАТЬ ЗАДЕРЖКУ TCP (ОТКЛЮЧИТЬ НАГЛА)", command=self.act_optimize_network, accent_color=COLOR_ACCENT_TEAL)
-        self.btn_net.pack(fill="x", padx=20, pady=5)
-        self.btn_mitig = HoverButton(boost_card, text="4. ОТКЛЮЧИТЬ ЗАЩИТНЫЕ ПАТЧИ CPU (+15% FPS)", command=self.act_disable_mitigations, accent_color=COLOR_ACCENT_VIOLET)
-        self.btn_mitig.pack(fill="x", padx=20, pady=5)
-        self.btn_freeze = HoverButton(boost_card, text="5. ЗАМОРОЗИТЬ ФОНОВЫЕ ПРОЦЕССЫ & ОЧИСТИТЬ ОЗУ (FREEZE)", command=self.act_toggle_freeze, accent_color=COLOR_ACCENT_GREEN)
-        self.btn_freeze.pack(fill="x", padx=20, pady=5)
-        self.btn_clean = HoverButton(boost_card, text="6. ОЧИСТКА ВРЕМЕННЫХ ФАЙЛОВ И КЭША ШЕЙДЕРОВ", command=self.act_clean_temp, accent_color=COLOR_ACCENT_TEAL)
-        self.btn_clean.pack(fill="x", padx=20, pady=5)
+        # Группа 1: Системная подготовка и обслуживание
+        prep_card = BeautifulCard(right_box, title="1. Подготовка и обслуживание")
+        prep_card.pack(fill="x", pady=(0, 10))
         
-        sep = tk.Frame(boost_card, bg=COLOR_BORDER, height=1)
-        sep.pack(fill="x", padx=20, pady=15)
+        p_row = tk.Frame(prep_card, bg=COLOR_CARD)
+        p_row.pack(fill="x", padx=20, pady=5)
+        self.btn_point = HoverButton(p_row, text="Создать точку восстановления", command=self.act_create_restore, accent_color=COLOR_ACCENT_GREEN, width=28)
+        self.btn_point.pack(side="left", padx=(0, 10), expand=True, fill="x")
+        self.btn_clean = HoverButton(p_row, text="Очистить временные файлы", command=self.act_clean_temp, accent_color=COLOR_ACCENT_TEAL, width=28)
+        self.btn_clean.pack(side="right", expand=True, fill="x")
         
-        self.btn_undo = HoverButton(boost_card, text="↺ ОТКАТИТЬ ВСЕ ИЗМЕНЕНИЯ (UNDO ALL)", command=self.act_undo_all, accent_color=COLOR_ACCENT_RED, normal_bg="#1A0F12", hover_bg="#3A1520", fg="#FF99AA")
-        self.btn_undo.pack(fill="x", padx=20, pady=(0, 10))
+        # Группа 2: Оптимизация ОС и Ядра
+        os_card = BeautifulCard(right_box, title="2. Твики операционной системы")
+        os_card.pack(fill="x", pady=(0, 10))
+        
+        row_os1 = tk.Frame(os_card, bg=COLOR_CARD)
+        row_os1.pack(fill="x", padx=20, pady=4)
+        self.btn_gm = HoverButton(row_os1, text="Игровой режим и приоритеты", command=self.act_enable_gamemode, accent_color=COLOR_ACCENT_TEAL)
+        self.btn_gm.pack(side="left", padx=(0, 10), expand=True, fill="x")
+        self.btn_hags = HoverButton(row_os1, text="Активировать HAGS (GPU)", command=self.act_enable_hags, accent_color=COLOR_ACCENT_TEAL)
+        self.btn_hags.pack(side="right", expand=True, fill="x")
+        
+        row_os2 = tk.Frame(os_card, bg=COLOR_CARD)
+        row_os2.pack(fill="x", padx=20, pady=4)
+        self.btn_comp = HoverButton(row_os2, text="Отключить сжатие ОЗУ", command=self.act_disable_memory_compression, accent_color=COLOR_ACCENT_TEAL)
+        self.btn_comp.pack(side="left", padx=(0, 10), expand=True, fill="x")
+        self.btn_park = HoverButton(row_os2, text="Отключить парковку ядер", command=self.act_disable_core_parking, accent_color=COLOR_ACCENT_TEAL)
+        self.btn_park.pack(side="right", expand=True, fill="x")
+
+        row_os3 = tk.Frame(os_card, bg=COLOR_CARD)
+        row_os3.pack(fill="x", padx=20, pady=4)
+        self.btn_throttling = HoverButton(row_os3, text="Отключить Power Throttling", command=self.act_disable_power_throttling, accent_color=COLOR_ACCENT_TEAL)
+        self.btn_throttling.pack(side="left", padx=(0, 10), expand=True, fill="x")
+        self.btn_mitig = HoverButton(row_os3, text="Отключить уязвимости CPU", command=self.act_disable_mitigations, accent_color=COLOR_ACCENT_VIOLET)
+        self.btn_mitig.pack(side="right", expand=True, fill="x")
+
+        # Группа 3: Сеть, службы и железо
+        hw_card = BeautifulCard(right_box, title="3. Платформа и службы")
+        hw_card.pack(fill="x", pady=(0, 10))
+
+        row_hw1 = tk.Frame(hw_card, bg=COLOR_CARD)
+        row_hw1.pack(fill="x", padx=20, pady=4)
+        self.btn_net = HoverButton(row_hw1, text="Оптимизировать сеть (TCP)", command=self.act_optimize_network, accent_color=COLOR_ACCENT_TEAL)
+        self.btn_net.pack(side="left", padx=(0, 10), expand=True, fill="x")
+        self.btn_freeze = HoverButton(row_hw1, text="Заморозить фоновые службы", command=self.act_toggle_freeze, accent_color=COLOR_ACCENT_GREEN)
+        self.btn_freeze.pack(side="right", expand=True, fill="x")
+
+        row_hw2 = tk.Frame(hw_card, bg=COLOR_CARD)
+        row_hw2.pack(fill="x", padx=20, pady=8)
+        
+        lbl_proc = tk.Label(row_hw2, text="EXE-файл игры:", font=("Segoe UI Semibold", 9), fg=COLOR_TEXT_SEC, bg=COLOR_CARD)
+        lbl_proc.pack(side="left", padx=(0, 5))
+        
+        self.game_proc_var = tk.StringVar(value="dota2.exe")
+        self.entry_proc = tk.Entry(row_hw2, textvariable=self.game_proc_var, font=("Segoe UI", 9), bg="#141416", fg=COLOR_TEXT_PR, insertbackground=COLOR_TEXT_PR, bd=1, relief="solid", width=15)
+        self.entry_proc.pack(side="left", padx=(0, 10), ipady=2)
+        
+        self.btn_hw_opt = HoverButton(row_hw2, text="Применить аппаратные твики", command=self.act_pc_gaming_optimizations, accent_color=COLOR_ACCENT_TEAL)
+        self.btn_hw_opt.pack(side="right", expand=True, fill="x")
+
+        # Группа 4: Управление и откат
+        control_card = BeautifulCard(right_box, title="Управление")
+        control_card.pack(fill="both", expand=True)
+        
+        self.btn_undo = HoverButton(control_card, text="СБРОСИТЬ ВСЕ ОПТИМИЗАЦИИ", command=self.act_undo_all, accent_color=COLOR_ACCENT_RED, normal_bg="#1A0F12", hover_bg="#3A1520", fg="#FF99AA")
+        self.btn_undo.pack(fill="x", padx=20, pady=10)
 
     def run_smart_advisor(self, cpu_load, ram_load, cpu_temp):
         advice = []
@@ -1013,44 +1383,65 @@ class HardInfoApp:
                 temp_val = float(cpu_temp.replace("°C", ""))
                 if temp_val > 80: advice.append("🔴 Процессор перегревается! Проверьте систему охлаждения.")
                 elif temp_val < 40 and cpu_load < 10: advice.append("❄️ Температура отличная, система в режиме простоя.")
-            except: pass
+            except Exception as e:
+                logging.error(f"Error parsing CPU temp for advisor: {e}")
         if not advice: advice.append("✅ Система работает стабильно. Аномалий не обнаружено.")
         self.lbl_advice.config(text="\n".join(advice))
 
     def update_opt_audit(self):
         self.status_var.set("Проведение аудита безопасности...")
-        if is_admin():
-            self.btn_point.config(state=tk.NORMAL)
-            self.btn_gm.config(state=tk.NORMAL)
-            self.btn_net.config(state=tk.NORMAL)
-            self.btn_mitig.config(state=tk.NORMAL)
-            self.btn_freeze.config(state=tk.NORMAL)
-            self.btn_undo.config(state=tk.NORMAL)
-            self.btn_point.config(text="1. СОЗДАТЬ ТОЧКУ ВОССТАНОВЛЕНИЯ (РЕКОМЕНДУЕТСЯ)")
+        has_admin = is_admin()
+        state_val = tk.NORMAL if has_admin else tk.DISABLED
+        
+        self.btn_point.config(state=state_val)
+        self.btn_gm.config(state=state_val)
+        self.btn_net.config(state=state_val)
+        self.btn_mitig.config(state=state_val)
+        self.btn_freeze.config(state=state_val)
+        self.btn_undo.config(state=state_val)
+        self.btn_hags.config(state=state_val)
+        self.btn_comp.config(state=state_val)
+        self.btn_park.config(state=state_val)
+        self.btn_throttling.config(state=state_val)
+        self.btn_hw_opt.config(state=state_val)
+        self.entry_proc.config(state=state_val)
+        
+        if has_admin:
+            self.btn_point.config(text="Создать точку восстановления")
         else:
-            self.btn_point.config(state=tk.DISABLED, text="1. ТРЕБУЮТСЯ ПРАВА АДМИНИСТРАТОРА")
-            self.btn_gm.config(state=tk.DISABLED)
-            self.btn_net.config(state=tk.DISABLED)
-            self.btn_mitig.config(state=tk.DISABLED)
-            self.btn_freeze.config(state=tk.DISABLED)
-            self.btn_undo.config(state=tk.DISABLED)
+            self.btn_point.config(text="ТРЕБУЮТСЯ ПРАВА АДМИНИСТРАТОРА")
+
         def check_worker():
-            if self.stop_event.is_set(): return
-            gm = check_game_mode_status()
-            pwr = check_power_plan_status()
-            vbs = check_vbs_status()
-            mitig = check_mitigations_status()
-            sv = psutil.virtual_memory()
-            standby_mb = int((sv.total - sv.available) // (1024**2))
-            self.root.after(0, lambda: self.apply_opt_audit(gm, pwr, vbs, mitig, standby_mb))
+            try:
+                if self.stop_event.is_set(): return
+                gm = check_game_mode_status()
+                pwr = check_power_plan_status()
+                vbs = check_vbs_status()
+                mitig = check_mitigations_status()
+                hags = check_hags_status()
+                comp = check_memory_compression_status()
+                pt = check_power_throttling_status()
+                
+                sv = psutil.virtual_memory()
+                standby_mb = int((sv.total - sv.available) // (1024**2))
+                
+                self.root.after(0, lambda: self.apply_opt_audit(gm, pwr, vbs, mitig, hags, comp, pt, standby_mb))
+            except Exception as e:
+                logging.exception(f"Critical error in background audit thread: {e}")
+                
         threading.Thread(target=check_worker, daemon=True).start()
 
-    def apply_opt_audit(self, gm, pwr, vbs, mitig, standby_mb):
-        self.audit_specs["aud_gm"].config(text=gm, fg=COLOR_ACCENT_GREEN if "Включен" in gm else COLOR_TEXT_SEC)
+    def apply_opt_audit(self, gm, pwr, vbs, mitig, hags, comp, pt, standby_mb):
+        self.audit_specs["aud_gm"].config(text=gm, fg=COLOR_ACCENT_GREEN if "Включен" in gm or "Включена" in gm else COLOR_TEXT_SEC)
         self.audit_specs["aud_power"].config(text=pwr, fg=COLOR_ACCENT_GREEN if "Высокая" in pwr or "Максимальная" in pwr else COLOR_TEXT_SEC)
         self.audit_specs["aud_vbs"].config(text=vbs, fg=COLOR_ACCENT_RED if "Включена" in vbs else COLOR_ACCENT_GREEN)
         self.audit_specs["aud_mitig"].config(text=mitig, fg=COLOR_ACCENT_GREEN if "Отключены" in mitig else COLOR_TEXT_SEC)
+        
+        self.audit_specs["aud_hags"].config(text=hags, fg=COLOR_ACCENT_GREEN if "Активирован" in hags else COLOR_TEXT_SEC)
+        self.audit_specs["aud_comp"].config(text=comp, fg=COLOR_ACCENT_GREEN if "Отключено" in comp else COLOR_TEXT_SEC)
+        self.audit_specs["aud_throttling"].config(text=pt, fg=COLOR_ACCENT_GREEN if "Отключено" in pt else COLOR_TEXT_SEC)
         self.audit_specs["aud_standby"].config(text=f"~ {standby_mb} МБ", fg=COLOR_ACCENT_TEAL)
+        
         if is_admin():
             self.uac_status_lbl.config(text="✓ Запущено от Администратора. Полный доступ разрешен.", fg=COLOR_ACCENT_GREEN)
             self.uac_btn.pack_forget()
@@ -1086,19 +1477,63 @@ class HardInfoApp:
             self.update_opt_audit()
         threading.Thread(target=worker, daemon=True).start()
 
+    def act_enable_hags(self):
+        self.status_var.set("Активация HAGS...")
+        def worker():
+            ok, msg = run_enable_hags()
+            self.root.after(0, lambda: self.show_opt_result(ok, msg))
+            self.update_opt_audit()
+        threading.Thread(target=worker, daemon=True).start()
+
+    def act_disable_memory_compression(self):
+        self.status_var.set("Отключение сжатия ОЗУ...")
+        def worker():
+            ok, msg = run_disable_memory_compression()
+            self.root.after(0, lambda: self.show_opt_result(ok, msg))
+            self.update_opt_audit()
+        threading.Thread(target=worker, daemon=True).start()
+
+    def act_disable_power_throttling(self):
+        self.status_var.set("Отключение Power Throttling...")
+        def worker():
+            ok, msg = run_disable_power_throttling()
+            self.root.after(0, lambda: self.show_opt_result(ok, msg))
+            self.update_opt_audit()
+        threading.Thread(target=worker, daemon=True).start()
+
+    def act_disable_core_parking(self):
+        self.status_var.set("Отключение парковки ядер...")
+        def worker():
+            ok, msg = run_disable_core_parking()
+            self.root.after(0, lambda: self.show_opt_result(ok, msg))
+            self.update_opt_audit()
+        threading.Thread(target=worker, daemon=True).start()
+
     def act_optimize_network(self):
         self.status_var.set("Оптимизация задержек сети...")
         def worker():
             ok, msg = run_net_optimization()
             self.root.after(0, lambda: self.show_opt_result(ok, msg))
+            self.update_opt_audit()
         threading.Thread(target=worker, daemon=True).start()
 
     def act_disable_mitigations(self):
-        confirm = messagebox.askyesno("Внимание", "Отключение патчей безопасности Spectre/Meltdown повысит производительность процессора в играх на 5-15%, но снизит защиту ОС от редких аппаратных уязвимостей. Вы согласны?")
+        confirm = messagebox.askyesno("Внимание", "Отключение патчей уязвимостей Spectre/Meltdown повысит производительность процессора, но снизит защиту ОС от редких аппаратных уязвимостей. Вы согласны?")
         if not confirm: return
         self.status_var.set("Изменение системных параметров CPU...")
         def worker():
             ok, msg = run_cpu_mitigations_toggle(disable=True)
+            self.root.after(0, lambda: self.show_opt_result(ok, msg))
+            self.update_opt_audit()
+        threading.Thread(target=worker, daemon=True).start()
+
+    def act_pc_gaming_optimizations(self):
+        proc_name = self.game_proc_var.get().strip()
+        if not proc_name:
+            proc_name = "dota2.exe"
+        self.status_var.set(f"Применение твиков для {proc_name}...")
+        def worker():
+            ok, msg = run_pc_gaming_optimizations(proc_name)
             self.root.after(0, lambda: self.show_opt_result(ok, msg))
             self.update_opt_audit()
         threading.Thread(target=worker, daemon=True).start()
@@ -1109,19 +1544,19 @@ class HardInfoApp:
         self.status_var.set(action_type)
         def worker():
             toggle_background_services(suspend=self.apps_suspended)
-            msg = "Фоновые программы приостановлены (Ресурсы CPU освобождены)" if self.apps_suspended else "Фоновые программы успешно запущены"
+            msg = "Фоновые программы приостановлены (Ресурсы CPU освобождены)" if self.apps_suspended else "Фоновые программы возобновили работу"
             if self.apps_suspended:
                 ok_r, msg_r = run_ram_working_set_clean()
                 msg = f"{msg}\n{msg_r}"
             self.root.after(0, lambda: self.show_opt_result(True, msg))
-            new_text = "5. РАЗМОРОЗИТЬ ФОНОВЫЕ ПРОЦЕССЫ (UNFREEZE)" if self.apps_suspended else "5. ЗАМОРОЗИТЬ ФОНОВЫЕ ПРОЦЕССЫ & ОЧИСТИТЬ ОЗУ (FREEZE & RAM CLEAN)"
+            new_text = "Разморозить фоновые службы" if self.apps_suspended else "Заморозить фоновые службы"
             new_col = COLOR_ACCENT_RED if self.apps_suspended else COLOR_TEXT_PR
             self.root.after(0, lambda: self.btn_freeze.config(text=new_text, fg=new_col))
             self.update_opt_audit()
         threading.Thread(target=worker, daemon=True).start()
 
     def act_clean_temp(self):
-        self.status_var.set("Очистка системных каталогов кэша...")
+        self.status_var.set("Очистка системных каталогов...")
         def worker():
             ok, msg = run_smart_clean()
             self.root.after(0, lambda: self.show_opt_result(ok, msg))
@@ -1131,8 +1566,11 @@ class HardInfoApp:
         confirm = messagebox.askyesno("Откат изменений", "Вы действительно хотите сбросить все примененные оптимизации и вернуть стандартные настройки Windows?")
         if not confirm: return
         self.status_var.set("Откат системных изменений...")
+        proc_name = self.game_proc_var.get().strip()
+        if not proc_name:
+            proc_name = "dota2.exe"
         def worker():
-            ok, msg = run_undo_all_optimization()
+            ok, msg = run_undo_all_optimization(proc_name)
             self.root.after(0, lambda: self.show_opt_result(ok, msg))
             self.update_opt_audit()
         threading.Thread(target=worker, daemon=True).start()
@@ -1202,29 +1640,35 @@ class HardInfoApp:
         self.status_var.set("Сбор характеристик компьютера...")
         self.refresh_btn.config(state=tk.DISABLED)
         def run_load():
-            if self.stop_event.is_set(): return
-            sys_os = query_wmi_json(ps_command('Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, OSArchitecture, InstallDate | ConvertTo-Json -Compress'))
-            sys_pc = query_wmi_json(ps_command('Get-CimInstance Win32_ComputerSystem | Select-Object Manufacturer, Model | ConvertTo-Json -Compress'))
-            sys_bios = query_wmi_json(ps_command('Get-CimInstance Win32_BIOS | Select-Object SerialNumber | ConvertTo-Json -Compress'))
-            sys_av = query_wmi_json(ps_command('Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct | Select-Object displayName | ConvertTo-Json -Compress'))
-            hostname = socket.gethostname()
             try:
-                local_ip = socket.gethostbyname(hostname)
-                net_status = "Подключено (Активно)"
-            except Exception:
-                local_ip = "127.0.0.1"
-                net_status = "Локальный режим"
-            cpu_name = get_cpu_name_windows()
-            cpu_db = find_cpu_db_specs(cpu_name)
-            cores_phys = psutil.cpu_count(logical=False)
-            cores_log = psutil.cpu_count(logical=True)
-            w_proc = query_wmi_json(ps_command('Get-CimInstance Win32_Processor | Select-Object MaxClockSpeed, L2CacheSize, L3CacheSize, CurrentVoltage | ConvertTo-Json -Compress'))
-            w_board = query_wmi_json(ps_command('Get-CimInstance Win32_BaseBoard | Select-Object Manufacturer, Product | ConvertTo-Json -Compress'))
-            w_bios_detail = query_wmi_json(ps_command('Get-CimInstance Win32_BIOS | Select-Object Manufacturer, SMBIOSBIOSVersion | ConvertTo-Json -Compress'))
-            w_ram = query_wmi_json(ps_command('Get-CimInstance Win32_PhysicalMemory | Select-Object Manufacturer, PartNumber, SerialNumber, Speed, Capacity, ConfiguredVoltage, MemoryType, SMBIOSMemoryType | ConvertTo-Json -Compress'))
-            w_gpu = query_wmi_json(ps_command('Get-CimInstance Win32_VideoController | Select-Object Name, AdapterRAM, DriverVersion, VideoProcessor | ConvertTo-Json -Compress'))
-            disks = get_disk_health_windows()
-            self.root.after(0, lambda: self.apply_loaded_data(sys_os, sys_pc, sys_bios, sys_av, hostname, local_ip, net_status, cpu_name, cpu_db, cores_phys, cores_log, w_proc, w_board, w_bios_detail, w_ram, w_gpu, disks))
+                if self.stop_event.is_set(): return
+                sys_os = query_wmi_json(ps_command('Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, OSArchitecture, InstallDate | ConvertTo-Json -Compress'))
+                sys_pc = query_wmi_json(ps_command('Get-CimInstance Win32_ComputerSystem | Select-Object Manufacturer, Model | ConvertTo-Json -Compress'))
+                sys_bios = query_wmi_json(ps_command('Get-CimInstance Win32_BIOS | Select-Object SerialNumber | ConvertTo-Json -Compress'))
+                sys_av = query_wmi_json(ps_command('Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct | Select-Object displayName | ConvertTo-Json -Compress'))
+                hostname = socket.gethostname()
+                try:
+                    local_ip = socket.gethostbyname(hostname)
+                    net_status = "Подключено (Активно)"
+                except Exception:
+                    local_ip = "127.0.0.1"
+                    net_status = "Локальный режим"
+                cpu_name = get_cpu_name_windows()
+                cpu_db = find_cpu_db_specs(cpu_name)
+                cores_phys = psutil.cpu_count(logical=False)
+                cores_log = psutil.cpu_count(logical=True)
+                w_proc = query_wmi_json(ps_command('Get-CimInstance Win32_Processor | Select-Object MaxClockSpeed, L2CacheSize, L3CacheSize, CurrentVoltage | ConvertTo-Json -Compress'))
+                w_board = query_wmi_json(ps_command('Get-CimInstance Win32_BaseBoard | Select-Object Manufacturer, Product | ConvertTo-Json -Compress'))
+                w_bios_detail = query_wmi_json(ps_command('Get-CimInstance Win32_BIOS | Select-Object Manufacturer, SMBIOSBIOSVersion | ConvertTo-Json -Compress'))
+                w_ram = query_wmi_json(ps_command('Get-CimInstance Win32_PhysicalMemory | Select-Object Manufacturer, PartNumber, SerialNumber, Speed, Capacity, ConfiguredVoltage, MemoryType, SMBIOSMemoryType | ConvertTo-Json -Compress'))
+                w_gpu = query_wmi_json(ps_command('Get-CimInstance Win32_VideoController | Select-Object Name, AdapterRAM, DriverVersion, VideoProcessor | ConvertTo-Json -Compress'))
+                disks = get_disk_health_windows()
+                self.root.after(0, lambda: self.apply_loaded_data(sys_os, sys_pc, sys_bios, sys_av, hostname, local_ip, net_status, cpu_name, cpu_db, cores_phys, cores_log, w_proc, w_board, w_bios_detail, w_ram, w_gpu, disks))
+            except Exception as e:
+                logging.exception(f"Unhandled error in loading thread: {e}")
+                self.root.after(0, lambda: self.status_var.set("Ошибка обновления"))
+                self.root.after(0, lambda: self.refresh_btn.config(state=tk.NORMAL))
+                
         threading.Thread(target=run_load, daemon=True).start()
 
     def apply_loaded_data(self, sys_os, sys_pc, sys_bios, sys_av, hostname, local_ip, net_status, cpu_name, cpu_db, cores_phys, cores_log, w_proc, w_board, w_bios_detail, w_ram, w_gpu, disks):
@@ -1382,7 +1826,8 @@ class HardInfoApp:
                     bar = ElegantProgressBar(bottom_frame, width=220, height=8, is_health=True)
                     bar.pack(side="right", pady=4)
                     bar.draw(val)
-                except Exception: pass
+                except Exception as e:
+                    logging.error(f"Failed to render disk health bar: {e}")
 
     def run_disk_test(self):
         self.bench_btn.config(state=tk.DISABLED, text="ТЕСТИРОВАНИЕ... (ОЖИДАЙТЕ)")
@@ -1470,12 +1915,21 @@ class HardInfoApp:
                 self.sens_specs["sens_clock_core"].config(text="Н/Д")
                 self.sens_specs["sens_clock_mem"].config(text="Н/Д")
                 self.sens_specs["sens_power"].config(text="Авто")
-        except Exception: pass
+        except Exception as e:
+            logging.error(f"Error in periodic update loop: {e}")
         self.root.after(1000, self.periodic_update)
+
 
 # --- ПОДГОТОВКА И ЗАПУСК ---
 if __name__ == "__main__":
-    # Фикс рабочей директории
+    # Защита от повторного запуска приложения (Mutex)
+    mutex = ctypes.windll.kernel32.CreateMutexW(None, True, "HARDINFO_SINGLE_INSTANCE_MUTEX")
+    if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+        root_temp = tk.Tk()
+        root_temp.withdraw()
+        messagebox.showwarning("Внимание", "HARDINFO уже запущен в фоновом режиме!")
+        sys.exit(0)
+
     if "__compiled__" in dir() or getattr(sys, 'frozen', False):
         try:
             os.chdir(os.path.dirname(sys.executable))
