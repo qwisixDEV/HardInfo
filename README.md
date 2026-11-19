@@ -1,100 +1,121 @@
-Main program features
-1. System and OS (Summary)
-OS Information: Displays the operating system name, version, build, architecture, installation date, and the exact computer uptime.
+# HARDINFO
 
-Platform Information: Displays the device manufacturer and model (motherboard or laptop), as well as the BIOS serial number.
+HARDINFO — утилита для Windows, которая собирает информацию об оборудовании, показывает
+текущие показатели и предоставляет набор «твиков» для игровой оптимизации. Приложение
+построено на PySide6 и psutil; данные ОС собираются одним вызовом PowerShell/WMI.
 
-Network Monitoring: Displays the computer name, current user, local IP address, and internet connection status.
+## Возможности
 
-Security: Detects Windows Defender status and the presence of third-party antivirus programs.
+### Сводка системы
+- ОС: название, версия, разрядность, дата установки и uptime.
+- Платформа: производитель и модель ПК/платы, серийный номер и версия BIOS.
+- CPU: ядра/потоки и кэши L2/L3; живые графики загрузки CPU и RAM.
+- **Диски**: модель, ёмкость, занятость, S.M.A.R.T.-статус, температура и износ
+  (когда WMI их предоставляет; для чтения S.M.A.R.T. могут требоваться права администратора).
+- **Бенчмарк диска**: последовательная запись/чтение временного файла 150 МБ с кнопкой отмены
+  и жёстким лимитом 512 МБ. Файл удаляется после завершения, отмены или ошибки.
+- **Сеть**: имя хоста, пользователь, локальные IP и состояние интерфейсов.
+  Внешние проверки доступности интернета по умолчанию не выполняются.
+- **Безопасность**: статус лицензии Windows и найденные антивирусы Security Center2.
+- Предупреждения по температуре, износу, заполненности диска и загрузке ЦП.
 
-Real-time graphs: Visualizes the CPU and RAM load history.
+### Процессор и память
+- Модель CPU, предполагаемое кодовое имя, техпроцесс, TDP и напряжение.
+- Ёмкость, тип, частота и тайминги ОЗУ, режим канала. Отдельные слоты SPD
+  в интерфейсе не отображаются — учитывается только суммарная информация.
+- Производитель/модель материнской платы и версия BIOS.
 
-Smart Advice: Automatically analyzes load and temperature indicators, displaying alerts in the event of overheating or critical resource load.
+### Видеокарта
+- Модель, кодовое имя, техпроцесс, шина, поддерживаемые API, VRAM и версия драйвера.
+- Температура, вентилятор, энергопотребление и загрузка GPU через `nvidia-smi`/NVML,
+  если доступны; для других вендеров используется облегчённый опрос.
 
-2. Processor (CPU-Z)
-CPU Specifications: Identifies the processor model, approximate architecture codename, process technology, thermal design power (TDP), supported instruction set, voltage, and number of cores/threads.
+### Драйверы
+- Версии видео-, сетевого и звукового драйверов.
+- Скачивание пакетов с официальных зеркал с проверкой Authenticode (или SHA256,
+  когда хэш зафиксирован). **HARDINFO никогда не запускает скачанные установщики
+  автоматически** — предлагается только открыть папку с файлом.
+- Поиск OEM-пакетов через `pnputil` и откат с строгой валидацией имени `oemNN.inf`.
 
-Cache Memory: Displays information about the cache sizes of the first (L1), second (L2), and third (L3) levels.
+### Оптимизация
+- Профили реестровых твиков с планом изменений, бэкапом и откатом в один клик.
+- Смена схемы электропитания и приоритетов игрового процесса/лаунчеров.
+- Очистка standby-листа ОЗУ и «Safe Undo» для восстановления изменений.
+- KMS-активация оставлена как есть, но перед ней показывается расширенное
+  предупреждение о замене цифровой лицензии. Это действие можно выполнять только
+  осознанно и на свой страх и риск.
 
-Motherboard: Displays the motherboard manufacturer, model, chipset, and current BIOS version.
+## Безопасность
 
-RAM: Provides information about the total memory capacity, its type (DDR3/DDR4/DDR5), operating mode (single-channel/dual-channel), frequency, and estimated timings.
+- Единая проверка прав администратора: опасные кнопки заблокированы при запуске без прав.
+- Твики применяются транзакционно: backup → запись только изменённых значений → откат.
+- Файл бэкапа `backup_settings.json` записывается атомарно; повреждённые файлы
+  перемещаются в карантин.
+- Имя OEM-пакета проверяется регулярным выражением, что исключает подмену команды
+  `pnputil` пользовательским вводом.
 
-SPD Slots: Reads and organizes information for each installed memory module (manufacturer, serial number, part number).
-
-3. Video Card (GPU-Z)
-Technical Specifications: Displays the GPU model, chip codename, manufacturing process, number of shaders/texture units (TMUs)/raster processing units (ROPs), bus width, as well as the amount, type, and manufacturer of video memory.
-
-Real-time Sensors: Displays the current chip temperature, fan speed, core load, processor/memory frequencies, and power consumption in watts (deep monitoring of NVIDIA graphics cards is implemented through the nvidia-smi system utility).
-
-Additionally: Displays supported graphics APIs, the installed driver version, and VBIOS status.
-
-4. Drives & Benchmark
-Drive Analysis: Reads physical drive (SSD/HDD) data, displays their S.M.A.R.T. status, current temperature, and the percentage of remaining memory cells (requires administrator privileges).
-
-Express Speed ​​Test: Performs a secure sequential disk test (sequentially writing and then reading a 150 MB test block to a temporary directory) to determine drive speed.
-
-5. Optimization (Game Boost)
-System Audit: Checks performance-critical parameters (Windows Game Mode is active, which power plan is in use, whether VBS core isolation is enabled, and the status of processor security patches).
-
-Configuration Tools (the application requires administrator privileges to use):
-
-Create a restore point before making changes.
-
-Enable Windows Game Mode, switch to a high-performance plan, and increase the priority of running game processes.
-
-Reduce network latency by adjusting TCP parameters (disabling the Nagle algorithm).
-
-Disable processor security patches (Spectre/Meltdown) to reduce CPU load in games (with a warning about potential security risks).
-
-Frees up RAM by compressing the working sets of background processes and suspending ("freezing") known non-critical programs (browsers, Discord, etc.).
-
-Cleans up temporary operating system files.
-
-Rolls back all applied changes to Microsoft default settings.
-
----
-
-## Структура проекта
-
-Монолитный `HardInfo.py` разбит на пакет `hardinfo/`. Корневой `HardInfo.py` оставлен как тонкая точка входа для обратной совместимости: `python HardInfo.py` по-прежнему запускает приложение.
-
-```
-HardInfo/
-├── HardInfo.py                # совместимая точка входа
-├── requirements.txt           # PySide6, psutil
-└── hardinfo/
-    ├── __init__.py            # версия и лёгкий run_app()
-    ├── bootstrap.py           # автодоустановка зависимостей при первом запуске
-    ├── cli.py                 # аргументы, mutex, логирование, запуск GUI/экспорт
-    ├── constants.py           # цвета, версия, имена файлов и mutex
-    ├── tweaks_db.py           # база твиков реестра
-    ├── collectors/            # сбор данных: WMI, сенсоры, GPU, спецификации
-    ├── models/                # типизированные модели HardwareProfile и др.
-    ├── formatters/            # форматирование значений и экспорт отчётов
-    ├── ui/                    # главное окно и пользовательские виджеты
-    └── utils/                 # реестр, логирование, активация, драйверы, хелперы
-```
-
-### Запуск
+## Установка и запуск
 
 ```bash
 pip install -r requirements.txt
 python HardInfo.py
 ```
 
-Дополнительно доступен экспорт отчёта без открытия окна:
+Для разработки и тестов:
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest -q tests
+```
+
+При первом импорте (`bootstrap.py`) приложение автоматически догружает
+недостающие пакеты, как и в оригинальной версии.
+
+Экспорт отчёта без GUI:
 
 ```bash
 python HardInfo.py --report text --output hardinfo_report.txt
 python HardInfo.py --report json --output hardinfo_report.json
 ```
 
-Программный запуск из кода:
+JSON-отчёт использует `schema: 2` и содержит секции `profile`, `health` и `sensors`.
+
+Программный запуск:
 
 ```python
 from hardinfo import run_app
 
 raise SystemExit(run_app())
 ```
+
+## Структура проекта
+
+```
+HardInfo/
+├── HardInfo.py                # тонкая точка входа обратной совместимости
+├── requirements.txt           # runtime-зависимости
+├── requirements-dev.txt       # pytest
+├── README.md
+├── CHANGELOG.md
+├── tests/                     # pytest: безопасность, реестр, коллекторы, GUI
+└── hardinfo/
+    ├── __init__.py            # версия и run_app()
+    ├── bootstrap.py           # автодоустановка зависимостей
+    ├── cli.py                 # аргументы, mutex, логирование, GUI/экспорт
+    ├── constants.py           # цвета, версия, лимиты и таймауты
+    ├── tweaks_db.py           # база реестровых твиков
+    ├── collectors/            # WMI, сенсоры, GPU, диски, сеть, AV, лицензия, бенчмарк
+    ├── models/                # HardwareProfile, health-модели, модели реестра
+    ├── formatters/            # форматирование значений и экспорт отчётов
+    ├── ui/                    # главное окно и виджеты
+    └── utils/                 # привилегии, реестр, драйверы, активация, логи
+```
+
+## Ограничения
+
+- S.M.A.R.T., таймеры и часть WMI-данных доступны не на всех системах и могут
+  требовать прав администратора; при недоступности показывается `Н/Д`.
+- Бенчмарк измеряет скорость только последовательной записью/чтением и создаёт
+  временный файл; он не моделирует произвольную нагрузку на диск.
+- KMS-активация обращается к стороннему серверу и может заменить цифровую лицензию.
+- Проект предназначен для Windows; на других ОС GUI и системные утилиты не работают.
