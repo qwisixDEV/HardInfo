@@ -8,6 +8,14 @@ from hardinfo.models.hardware import (
     OSInfo,
     PlatformInfo,
 )
+from hardinfo.models.health import (
+    DiskBenchmarkResult,
+    DiskInfo,
+    LicenseInfo,
+    NetworkInfo,
+    SecurityProductInfo,
+    SystemHealthSnapshot,
+)
 from hardinfo.models.registry import BackupEntry, RegistryTarget, TweakResult
 
 __all__ = [
@@ -20,4 +28,10 @@ __all__ = [
     "BackupEntry",
     "RegistryTarget",
     "TweakResult",
+    "DiskBenchmarkResult",
+    "DiskInfo",
+    "LicenseInfo",
+    "NetworkInfo",
+    "SecurityProductInfo",
+    "SystemHealthSnapshot",
 ]

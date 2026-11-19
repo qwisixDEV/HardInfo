@@ -1,6 +1,7 @@
 """Typed data models for hardware information collected from WMI."""
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Mapping
 
 from hardinfo.utils.helpers import clean_system_string
@@ -27,11 +28,23 @@ def _int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _date(value: Any, default: str = "Н/Д") -> str:
+    """Convert a WMI DMTF datetime to an ISO date string."""
+    raw = str(value or "")
+    if len(raw) < 8 or not raw[:8].isdigit():
+        return default
+    try:
+        return datetime.strptime(raw[:8], "%Y%m%d").date().isoformat()
+    except ValueError:
+        return default
+
+
 @dataclass(frozen=True)
 class OSInfo:
     name: str
     version: str
     architecture: str
+    install_date: str = "Н/Д"
 
 
 @dataclass(frozen=True)
@@ -48,6 +61,10 @@ class PlatformInfo:
 class CPUInfo:
     name: str
     voltage: Any
+    cores: int = 0
+    logical_processors: int = 0
+    l2_cache_kb: int = 0
+    l3_cache_kb: int = 0
 
 
 @dataclass(frozen=True)
@@ -101,6 +118,7 @@ class HardwareProfile:
                 name=_text(os_data.get("Caption"), "Windows"),
                 version=_text(os_data.get("Version")),
                 architecture=_text(os_data.get("OSArchitecture")),
+                install_date=_date(os_data.get("InstallDate")),
             ),
             platform=PlatformInfo(
                 manufacturer=_text(pc_data.get("Manufacturer")),
@@ -113,6 +131,10 @@ class HardwareProfile:
             cpu=CPUInfo(
                 name=str(cpu_data.get("Name") or "Н/Д"),
                 voltage=cpu_data.get("CurrentVoltage"),
+                cores=_int(cpu_data.get("NumberOfCores")),
+                logical_processors=_int(cpu_data.get("NumberOfLogicalProcessors")),
+                l2_cache_kb=_int(cpu_data.get("L2CacheSize")),
+                l3_cache_kb=_int(cpu_data.get("L3CacheSize")),
             ),
             memory=MemoryInfo(
                 total_bytes=total_bytes,

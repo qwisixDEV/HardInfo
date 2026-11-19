@@ -13,10 +13,15 @@ $ErrorActionPreference = "SilentlyContinue"
 $os = Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, OSArchitecture, InstallDate | ConvertTo-Json -Compress
 $pc = Get-CimInstance Win32_ComputerSystem | Select-Object Manufacturer, Model | ConvertTo-Json -Compress
 $bios = Get-CimInstance Win32_BIOS | Select-Object SerialNumber, Manufacturer, SMBIOSBIOSVersion | ConvertTo-Json -Compress
-$cpu = Get-CimInstance Win32_Processor | Select-Object Name, MaxClockSpeed, L2CacheSize, L3CacheSize, CurrentVoltage | ConvertTo-Json -Compress
+$cpu = Get-CimInstance Win32_Processor | Select-Object Name, MaxClockSpeed, NumberOfCores, NumberOfLogicalProcessors, L2CacheSize, L3CacheSize, CurrentVoltage | ConvertTo-Json -Compress
 $board = Get-CimInstance Win32_BaseBoard | Select-Object Manufacturer, Product | ConvertTo-Json -Compress
 $ram = Get-CimInstance Win32_PhysicalMemory | Select-Object Manufacturer, PartNumber, SerialNumber, Speed, Capacity, SMBIOSMemoryType | ConvertTo-Json -Compress
 $gpu = Get-CimInstance Win32_VideoController | Select-Object Name, AdapterRAM, DriverVersion, VideoProcessor | ConvertTo-Json -Compress
+$disks = Get-CimInstance Win32_DiskDrive | Select-Object Model, MediaType, InterfaceType, Size, Status | ConvertTo-Json -Compress
+$disk_health = Get-CimInstance -Namespace root\\wmi -ClassName MSStorageDriver_FailurePredictStatus | Select-Object InstanceName, PredictFailure | ConvertTo-Json -Compress
+$smart = Get-CimInstance -Namespace root\\wmi -ClassName MSStorageDriver_ATAPISmartData | Select-Object InstanceName, VendorSpecific | ConvertTo-Json -Compress
+$av = Get-CimInstance -Namespace root\\SecurityCenter2 -ClassName AntiVirusProduct | Select-Object displayName, productState | ConvertTo-Json -Compress
+$license = Get-CimInstance SoftwareLicensingProduct -Filter "PartialProductKey is not null" | Select-Object Name, LicenseStatus, GracePeriodRemaining, PartialProductKey | ConvertTo-Json -Compress
 
 # Локализационно-независимый опрос сетевого и медийного драйвера напрямую через PnP-классы
 $net = Get-CimInstance Win32_PnPSignedDriver | Where-Object { $_.DeviceClass -eq "NET" } | Select-Object DeviceName, DriverVersion | ConvertTo-Json -Compress
@@ -24,6 +29,7 @@ $audio = Get-CimInstance Win32_PnPSignedDriver | Where-Object { $_.DeviceClass -
 
 $payload = @{
     os = $os; pc = $pc; bios = $bios; cpu = $cpu; board = $board; ram = $ram; gpu = $gpu; net = $net; audio = $audio
+    disks = $disks; disk_health = $disk_health; smart = $smart; av = $av; license = $license
 }
 ConvertTo-Json $payload -Depth 4 -Compress
 """
