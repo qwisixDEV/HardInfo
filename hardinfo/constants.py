@@ -1,7 +1,7 @@
 """Application-wide constants, color schemes, and configuration.
 """
 
-APP_VERSION = "0.0.2"
+APP_VERSION = "0.0.3"
 MUTEX_NAME = "HARDINFO_PYSIDE_MUTEX_V3"
 REGISTRY_BACKUP_FILE = "backup_settings.json"
 LOG_FILE = "hardinfo.log"

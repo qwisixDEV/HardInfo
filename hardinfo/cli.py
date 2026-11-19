@@ -50,12 +50,14 @@ def _warn_already_running() -> None:
 
 
 def _export_report(fmt: str, output: str) -> int:
-    from hardinfo.collectors import collect_system_snapshot
+    from hardinfo.collectors import collect_health_snapshot, collect_system_snapshot
     from hardinfo.formatters import export_report
     from hardinfo.models import HardwareProfile
 
-    profile = HardwareProfile.from_wmi_payload(collect_system_snapshot())
-    destination = export_report(profile, output, fmt=fmt)
+    payload = collect_system_snapshot()
+    profile = HardwareProfile.from_wmi_payload(payload)
+    health = collect_health_snapshot(payload, use_slsmgr=True)
+    destination = export_report(profile, output, fmt=fmt, health=health)
     print(f"[SYSTEM] Отчёт сохранён: {destination}")
     return 0
 

@@ -7,7 +7,7 @@ from hardinfo.collectors.gpu import (
     get_amd_intel_gpu_usage_light,
     get_nvidia_detailed_sensors,
 )
-from hardinfo.collectors.health import collect_health_snapshot
+from hardinfo.collectors.health import HealthInfoThread, collect_health_snapshot
 from hardinfo.collectors.license import collect_license
 from hardinfo.collectors.network import collect_network
 from hardinfo.collectors.security import collect_security
@@ -27,6 +27,7 @@ __all__ = [
     "collect_disks",
     "parse_smart",
     "collect_health_snapshot",
+    "HealthInfoThread",
     "collect_license",
     "collect_network",
     "collect_security",

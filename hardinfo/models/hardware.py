@@ -1,7 +1,7 @@
 """Typed data models for hardware information collected from WMI."""
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from hardinfo.utils.helpers import clean_system_string
@@ -31,6 +31,12 @@ def _int(value: Any, default: int = 0) -> int:
 def _date(value: Any, default: str = "Н/Д") -> str:
     """Convert a WMI DMTF datetime to an ISO date string."""
     raw = str(value or "")
+    if raw.startswith("/Date("):
+        try:
+            millis = int(raw.split("(", 1)[1].split(")", 1)[0].split("+", 1)[0].split("-", 1)[0])
+            return datetime.fromtimestamp(millis / 1000, tz=timezone.utc).date().isoformat()
+        except (ValueError, OverflowError, OSError):
+            return default
     if len(raw) < 8 or not raw[:8].isdigit():
         return default
     try:

@@ -30,12 +30,15 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QStackedWidget,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from hardinfo.collectors import (
+    DiskBenchmarkThread,
+    HealthInfoThread,
     SensorMonitorThread,
     SystemInfoThread,
     estimate_ram_timings,
@@ -43,6 +46,7 @@ from hardinfo.collectors import (
 )
 from hardinfo.constants import (
     APP_VERSION,
+    DISK_BENCHMARK_SIZE_MB,
     COLOR_ACCENT_GREEN,
     COLOR_ACCENT_RED,
     COLOR_ACCENT_TEAL,
@@ -55,8 +59,10 @@ from hardinfo.constants import (
     COLOR_TEXT_SEC,
 )
 from hardinfo.formatters import (
+    format_bytes,
     format_cpu_voltage,
     format_memory_capacity,
+    format_uptime,
     format_vram,
 )
 from hardinfo.models import HardwareProfile
@@ -85,7 +91,7 @@ OEM_DRIVER_PATTERN = re.compile(r"oem\d+\.inf", re.IGNORECASE)
 class HardInfoMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("HARDINFO 0.0.2 — Global System Tuner")
+        self.setWindowTitle(f"HARDINFO {APP_VERSION} — Global System Tuner")
         self.resize(1200, 800)
         self.setStyleSheet(f"background-color: {COLOR_BG};")
         
@@ -120,6 +126,8 @@ class HardInfoMainWindow(QMainWindow):
         for widget, ru, en in self.translatable_widgets:
             widget.setText(ru if self.current_lang == "ru" else en)
         self.btn_lang.setText("Language: EN" if self.current_lang == "en" else "Язык: RU")
+        for index, (ru, en) in enumerate(getattr(self, "sys_tab_labels", [])):
+            self.sys_subtabs.setTabText(index, ru if self.current_lang == "ru" else en)
         self.load_tweaks_states()
 
     def animate_fade_in(self, widget):
@@ -140,6 +148,27 @@ class HardInfoMainWindow(QMainWindow):
         self.info_thread.wait()
         self.sensor_thread.requestInterruption()
         self.sensor_thread.wait()
+
+        health_thread = getattr(self, "health_thread", None)
+        if health_thread is not None and health_thread.isRunning():
+            health_thread.quit()
+            health_thread.wait()
+
+        benchmark_thread = getattr(self, "benchmark_thread", None)
+        if benchmark_thread is not None and benchmark_thread.isRunning():
+            benchmark_thread.cancel()
+            benchmark_thread.wait()
+
+        download_thread = getattr(self, "dl_thread", None)
+        if download_thread is not None and download_thread.isRunning():
+            download_thread.quit()
+            download_thread.wait()
+
+        activation_thread = getattr(self, "act_thread", None)
+        if activation_thread is not None and activation_thread.isRunning():
+            activation_thread.quit()
+            activation_thread.wait()
+
         super().closeEvent(event)
 
     def append_log(self, text):
@@ -309,30 +338,47 @@ class HardInfoMainWindow(QMainWindow):
 
     # --- ВКЛАДКА 1: СВОДКА СИСТЕМЫ ---
     def build_tab_sys(self):
-        layout = QHBoxLayout(self.tab_sys_widget)
+        layout = QVBoxLayout(self.tab_sys_widget)
         layout.setContentsMargins(0, 0, 0, 0)
-        
+
+        self.sys_subtabs = QTabWidget()
+        self.sys_subtabs.setStyleSheet(
+            f"QTabWidget::pane {{ border: none; }} "
+            f"QTabBar::tab {{ background: {COLOR_CARD}; color: {COLOR_TEXT_SEC}; "
+            f"padding: 8px 14px; border: 1px solid {COLOR_BORDER}; }} "
+            f"QTabBar::tab:selected {{ color: {COLOR_ACCENT_TEAL}; }}"
+        )
+        layout.addWidget(self.sys_subtabs)
+        self.sys_tab_labels: list[tuple[str, str]] = []
+
+        # --- Обзор ---
+        overview = QWidget()
+        olayout = QHBoxLayout(overview)
+        olayout.setContentsMargins(0, 0, 0, 0)
         col_left = QVBoxLayout()
         col_right = QVBoxLayout()
-        layout.addLayout(col_left, stretch=1)
-        layout.addLayout(col_right, stretch=1)
-        
+        olayout.addLayout(col_left, stretch=1)
+        olayout.addLayout(col_right, stretch=1)
+
         card_os = HoverCard("Программное обеспечение (ОС)", "Operating System (OS)", COLOR_ACCENT_GREEN, self)
         self.lbl_sys_os = self.add_row(card_os, "Операционная система:", "Operating System:")
         self.lbl_sys_ver = self.add_row(card_os, "Версия / Сборка:", "OS Version / Build:")
         self.lbl_sys_arch = self.add_row(card_os, "Разрядность ядра:", "System Architecture:")
+        self.lbl_sys_install = self.add_row(card_os, "Дата установки:", "Install Date:")
+        self.lbl_sys_uptime = self.add_row(card_os, "Время работы:", "Uptime:")
         col_left.addWidget(card_os)
-        
+
         card_pc = HoverCard("Аппаратная платформа", "Hardware Platform", COLOR_ACCENT_TEAL, self)
         self.lbl_sys_pc_man = self.add_row(card_pc, "Вендор ПК:", "System Vendor:")
         self.lbl_sys_pc_mod = self.add_row(card_pc, "Модель ПК:", "System Model:")
         self.lbl_sys_bios_sn = self.add_row(card_pc, "Серийный номер BIOS:", "BIOS Serial Number:")
+        self.lbl_sys_cpu_topology = self.add_row(card_pc, "Ядра / потоки:", "Cores / Threads:")
+        self.lbl_sys_caches = self.add_row(card_pc, "Кэш L2 / L3:", "L2 / L3 Cache:")
         col_left.addWidget(card_pc)
         col_left.addStretch(1)
-        
+
         card_graph = HoverCard("Мониторинг ресурсов", "Resource History Monitor", COLOR_ACCENT_VIOLET, self)
         glay = QHBoxLayout()
-        
         g1 = QVBoxLayout()
         glbl1 = QLabel()
         glbl1.setStyleSheet(f"color: {COLOR_TEXT_SEC}; font-size: 8px; font-weight: bold; border: none; background: transparent;")
@@ -340,7 +386,6 @@ class HardInfoMainWindow(QMainWindow):
         self.chart_cpu = RealtimeLineChart(COLOR_ACCENT_TEAL)
         g1.addWidget(glbl1)
         g1.addWidget(self.chart_cpu)
-        
         g2 = QVBoxLayout()
         glbl2 = QLabel()
         glbl2.setStyleSheet(f"color: {COLOR_TEXT_SEC}; font-size: 8px; font-weight: bold; border: none; background: transparent;")
@@ -348,12 +393,187 @@ class HardInfoMainWindow(QMainWindow):
         self.chart_ram = RealtimeLineChart(COLOR_ACCENT_VIOLET)
         g2.addWidget(glbl2)
         g2.addWidget(self.chart_ram)
-        
         glay.addLayout(g1)
         glay.addLayout(g2)
         card_graph.main_layout.addLayout(glay)
         col_right.addWidget(card_graph)
         col_right.addStretch(1)
+        self.add_sys_subtab(overview, "Обзор", "Overview")
+
+        # --- Диски ---
+        disks_page = QWidget()
+        disks_layout = QVBoxLayout(disks_page)
+        disks_layout.setContentsMargins(0, 0, 0, 0)
+        bench_card = HoverCard("Бенчмарк диска", "Disk Benchmark", COLOR_ACCENT_TEAL, self)
+        bench_row = QHBoxLayout()
+        self.btn_disk_benchmark = QPushButton()
+        self.btn_disk_benchmark.setFixedHeight(34)
+        self.btn_disk_benchmark.setStyleSheet(
+            f"QPushButton {{ background-color: #121d22; color: {COLOR_ACCENT_TEAL}; "
+            f"font-size: 11px; font-weight: bold; border: 1px solid {COLOR_ACCENT_TEAL}; border-radius: 4px; }}"
+        )
+        self.register_tr(self.btn_disk_benchmark, "БЕНЧМАРК 150 МБ", "BENCHMARK 150 MB")
+        self.btn_disk_benchmark.clicked.connect(self.run_disk_benchmark)
+        self.btn_benchmark_cancel = QPushButton()
+        self.btn_benchmark_cancel.setFixedHeight(34)
+        self.btn_benchmark_cancel.setEnabled(False)
+        self.register_tr(self.btn_benchmark_cancel, "ОТМЕНА", "CANCEL")
+        self.btn_benchmark_cancel.clicked.connect(self.cancel_disk_benchmark)
+        bench_row.addWidget(self.btn_disk_benchmark)
+        bench_row.addWidget(self.btn_benchmark_cancel)
+        bench_card.main_layout.addLayout(bench_row)
+        self.benchmark_progress = ElegantProgressBar(width_bar=400)
+        bench_card.main_layout.addWidget(self.benchmark_progress)
+        self.lbl_benchmark_result = QLabel("—")
+        self.lbl_benchmark_result.setStyleSheet(f"color: {COLOR_TEXT_SEC}; font-size: 11px;")
+        bench_card.main_layout.addWidget(self.lbl_benchmark_result)
+        disks_layout.addWidget(bench_card)
+
+        disk_scroll = QScrollArea()
+        disk_scroll.setWidgetResizable(True)
+        disk_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        disk_container = QWidget()
+        self.disk_cards_layout = QVBoxLayout(disk_container)
+        self.disk_cards_layout.setContentsMargins(0, 0, 0, 0)
+        disk_scroll.setWidget(disk_container)
+        disks_layout.addWidget(disk_scroll)
+        self.add_sys_subtab(disks_page, "Диски", "Disks")
+
+        # --- Сеть ---
+        network_page = QWidget()
+        network_layout = QVBoxLayout(network_page)
+        network_layout.setContentsMargins(0, 0, 0, 0)
+        card_net = HoverCard("Локальная сеть", "Local Network", COLOR_ACCENT_TEAL, self)
+        self.lbl_net_host = self.add_row(card_net, "Имя хоста:", "Hostname:")
+        self.lbl_net_user = self.add_row(card_net, "Пользователь:", "User:")
+        self.lbl_net_ip = self.add_row(card_net, "IP-адреса:", "IP Addresses:")
+        self.lbl_net_status = self.add_row(card_net, "Состояние:", "Status:")
+        self.lbl_net_ifaces = self.add_row(card_net, "Интерфейсы:", "Interfaces:")
+        network_layout.addWidget(card_net)
+        network_layout.addStretch(1)
+        self.add_sys_subtab(network_page, "Сеть", "Network")
+
+        # --- Безопасность ---
+        security_page = QWidget()
+        security_layout = QVBoxLayout(security_page)
+        security_layout.setContentsMargins(0, 0, 0, 0)
+        card_license = HoverCard("Лицензия Windows", "Windows License", COLOR_ACCENT_VIOLET, self)
+        self.lbl_license_status = self.add_row(card_license, "Статус:", "Status:")
+        security_layout.addWidget(card_license)
+
+        card_av = HoverCard("Антивирусная защита", "Antivirus Protection", COLOR_ACCENT_GREEN, self)
+        self.av_rows_layout = QVBoxLayout()
+        card_av.main_layout.addLayout(self.av_rows_layout)
+        security_layout.addWidget(card_av)
+
+        self.lbl_health_warnings = QLabel()
+        self.lbl_health_warnings.setWordWrap(True)
+        self.lbl_health_warnings.setStyleSheet(f"color: {COLOR_ACCENT_RED}; font-size: 11px;")
+        security_layout.addWidget(self.lbl_health_warnings)
+        security_layout.addStretch(1)
+        self.add_sys_subtab(security_page, "Безопасность", "Security")
+
+    def add_sys_subtab(self, widget: QWidget, ru: str, en: str) -> None:
+        """Register a system sub-tab with bilingual captions."""
+        self.sys_subtabs.addTab(widget, ru if self.current_lang == "ru" else en)
+        self.sys_tab_labels.append((ru, en))
+
+    def run_disk_benchmark(self) -> None:
+        if getattr(self, "benchmark_thread", None) and self.benchmark_thread.isRunning():
+            return
+        self.btn_disk_benchmark.setEnabled(False)
+        self.btn_benchmark_cancel.setEnabled(True)
+        self.benchmark_progress.set_value(0)
+        self.lbl_benchmark_result.setText("...")
+        self.benchmark_thread = DiskBenchmarkThread(DISK_BENCHMARK_SIZE_MB)
+        self.benchmark_thread.progress_signal.connect(self.benchmark_progress.set_value)
+        self.benchmark_thread.finished_signal.connect(self.benchmark_finished)
+        self.benchmark_thread.error_signal.connect(self.benchmark_failed)
+        self.benchmark_thread.start()
+
+    def cancel_disk_benchmark(self) -> None:
+        thread = getattr(self, "benchmark_thread", None)
+        if thread and thread.isRunning():
+            thread.cancel()
+            self.lbl_benchmark_result.setText("Отмена..." if self.current_lang == "ru" else "Cancelling...")
+
+    def benchmark_finished(self, result) -> None:
+        self.btn_disk_benchmark.setEnabled(True)
+        self.btn_benchmark_cancel.setEnabled(False)
+        self.benchmark_progress.set_value(100)
+        text = result.summary + (" [ОТМЕНЕНО]" if result.cancelled else "")
+        self.lbl_benchmark_result.setText(text)
+        self.append_log(f"[BENCH] {text}")
+        self.health_benchmark = result
+
+    def benchmark_failed(self, message: str) -> None:
+        self.btn_disk_benchmark.setEnabled(True)
+        self.btn_benchmark_cancel.setEnabled(False)
+        self.lbl_benchmark_result.setText(message)
+        self.append_log(f"[ERROR] {message}")
+
+    def apply_health_snapshot(self, health) -> None:
+        """Populate the dynamic health tabs from a typed snapshot."""
+        self.lbl_sys_uptime.setText(format_uptime(health.uptime_seconds))
+
+        net = health.network
+        if net:
+            self.lbl_net_host.setText(net.hostname)
+            self.lbl_net_user.setText(net.username)
+            self.lbl_net_ip.setText(", ".join(net.ip_addresses) or "Н/Д")
+            self.lbl_net_status.setText(
+                ("Подключено" if net.is_connected else "Нет активных интерфейсов")
+                if self.current_lang == "ru"
+                else ("Connected" if net.is_connected else "No active interfaces")
+            )
+            self.lbl_net_ifaces.setText("\n".join(net.interfaces) or "Н/Д")
+
+        if health.license:
+            license = health.license
+            text = f"{license.name} — {license.status} ({license.expiration})"
+            self.lbl_license_status.setText(text)
+
+        while self.av_rows_layout.count():
+            item = self.av_rows_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+        for product in health.security:
+            state = (
+                f"{product.name}: "
+                + ("включён" if product.enabled else "отключён")
+                + (", базы актуальны" if product.up_to_date else ", базы устарели")
+                if self.current_lang == "ru"
+                else f"{product.name}: "
+                + ("enabled" if product.enabled else "disabled")
+                + (", up-to-date" if product.up_to_date else ", outdated")
+            )
+            label = QLabel(state)
+            label.setStyleSheet(f"color: {COLOR_TEXT_PR}; font-size: 11px;")
+            self.av_rows_layout.addWidget(label)
+
+        while self.disk_cards_layout.count():
+            item = self.disk_cards_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+        for disk in health.disks:
+            card = HoverCard(disk.model, disk.model, COLOR_ACCENT_TEAL, self)
+            self.add_row(card, "Том:", "Mount:").setText(disk.mountpoint or "Н/Д")
+            self.add_row(card, "Размер:", "Size:").setText(format_bytes(disk.size_bytes))
+            self.add_row(card, "Занято:", "Used:").setText(f"{disk.used_percent}%")
+            self.add_row(card, "S.M.A.R.T.:", "S.M.A.R.T.:").setText(disk.health)
+            self.add_row(card, "Температура:", "Temperature:").setText(
+                f"{disk.temperature:.0f}°C" if disk.temperature is not None else "Н/Д"
+            )
+            self.add_row(card, "Износ:", "Wear:").setText(
+                f"{disk.wear_percent:.0f}%" if disk.wear_percent is not None else "Н/Д"
+            )
+            self.disk_cards_layout.addWidget(card)
+
+        self.lbl_health_warnings.setText(
+            "\n".join("! " + warning for warning in health.warnings)
+        )
 
     # --- CPU И ОЗУ ---
     def build_tab_cpu(self):
@@ -1139,12 +1359,27 @@ class HardInfoMainWindow(QMainWindow):
 
     def apply_hardware_specs(self, data):
         """Populate hardware tabs from a normalized :class:`HardwareProfile`."""
+        self.wmi_payload = data
         profile = HardwareProfile.from_wmi_payload(data)
 
         # Вкладка 1: ОС
         self.lbl_sys_os.setText(profile.os.name)
         self.lbl_sys_ver.setText(profile.os.version)
         self.lbl_sys_arch.setText(profile.os.architecture)
+        self.lbl_sys_install.setText(profile.os.install_date)
+        self.lbl_sys_cpu_topology.setText(
+            f"{profile.cpu.cores} / {profile.cpu.logical_processors}"
+        )
+        self.lbl_sys_caches.setText(
+            f"{profile.cpu.l2_cache_kb} / {profile.cpu.l3_cache_kb} KB"
+        )
+
+        if not getattr(self, "_health_started", False):
+            self._health_started = True
+            self.health_thread = HealthInfoThread(data)
+            self.health_thread.health_loaded_signal.connect(self.apply_health_snapshot)
+            self.health_thread.start()
+
         self.lbl_sys_pc_man.setText(profile.platform.manufacturer)
         self.lbl_sys_pc_mod.setText(profile.platform.model)
         self.lbl_sys_bios_sn.setText(profile.platform.bios_serial)

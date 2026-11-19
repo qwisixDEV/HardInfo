@@ -5,6 +5,7 @@ import time
 from typing import Any, Mapping
 
 import psutil
+from PySide6.QtCore import QThread, Signal
 
 from hardinfo.constants import LOAD_WARNING_PERCENT
 from hardinfo.models.health import (
@@ -60,3 +61,20 @@ def collect_health_snapshot(
         benchmark=benchmark,
         warnings=tuple(warnings),
     )
+
+
+class HealthInfoThread(QThread):
+    """Collects dynamic health data without blocking the GUI thread."""
+
+    health_loaded_signal = Signal(object)
+
+    def __init__(self, payload: Mapping[str, Any] | None = None):
+        super().__init__()
+        self.payload = dict(payload or {})
+
+    def run(self) -> None:
+        try:
+            snapshot = collect_health_snapshot(self.payload)
+            self.health_loaded_signal.emit(snapshot)
+        except Exception as exc:  # pragma: no cover - defensive GUI guard
+            logging.error("[ERROR] Health collection failed: %s", exc)

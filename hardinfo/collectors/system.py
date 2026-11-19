@@ -9,6 +9,8 @@ from typing import Any
 from PySide6.QtCore import QThread, Signal
 
 WMI_SCRIPT = """
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = "SilentlyContinue"
 $os = Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, OSArchitecture, InstallDate | ConvertTo-Json -Compress
 $pc = Get-CimInstance Win32_ComputerSystem | Select-Object Manufacturer, Model | ConvertTo-Json -Compress
@@ -68,8 +70,10 @@ class SystemInfoThread(QThread):
         logging.info("[SYSTEM] Фоновый сбор WMI характеристик (Language-Independent)...")
         try:
             data = collect_system_snapshot()
-            if data:
-                self.hardware_loaded_signal.emit(data)
-                logging.info("[SYSTEM] Профиль оборудования собран.")
+            self.hardware_loaded_signal.emit(data)
+            logging.info(
+                "[SYSTEM] Профиль оборудования собран." if data
+                else "[SYSTEM] WMI недоступен, используется резервный сбор данных."
+            )
         except Exception as e:
             logging.error(f"[ERROR] Ошибка WMI сбора: {e}")

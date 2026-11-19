@@ -76,7 +76,7 @@ class SecurityProductInfo:
             name=_text(raw.get("displayName"), "Неизвестно"),
             product_state=state,
             enabled=bool(state & 0x1000),
-            up_to_date=not bool(state & 0x0100),
+            up_to_date=(state & 0x1100) != 0x0100,
         )
 
 
