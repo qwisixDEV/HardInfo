@@ -1,0 +1,19 @@
+"""Application-wide constants, color schemes, and configuration.
+"""
+
+APP_VERSION = "0.0.2"
+MUTEX_NAME = "HARDINFO_PYSIDE_MUTEX_V3"
+REGISTRY_BACKUP_FILE = "backup_settings.json"
+LOG_FILE = "hardinfo.log"
+
+# --- ЦВЕТОВАЯ ПАЛИТРА PITCH BLACK & NEON GLOW ---
+COLOR_BG = "#040405"
+COLOR_SIDEBAR = "#09090b"
+COLOR_CARD = "#0d0d10"
+COLOR_BORDER = "#1b1b22"
+COLOR_TEXT_PR = "#FFFFFF"
+COLOR_TEXT_SEC = "#8a8a93"
+COLOR_ACCENT_TEAL = "#00ffcc"
+COLOR_ACCENT_VIOLET = "#d946ef"
+COLOR_ACCENT_GREEN = "#00ff66"
+COLOR_ACCENT_RED = "#ff3366"

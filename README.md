@@ -53,3 +53,48 @@ Frees up RAM by compressing the working sets of background processes and suspend
 Cleans up temporary operating system files.
 
 Rolls back all applied changes to Microsoft default settings.
+
+---
+
+## Структура проекта
+
+Монолитный `HardInfo.py` разбит на пакет `hardinfo/`. Корневой `HardInfo.py` оставлен как тонкая точка входа для обратной совместимости: `python HardInfo.py` по-прежнему запускает приложение.
+
+```
+HardInfo/
+├── HardInfo.py                # совместимая точка входа
+├── requirements.txt           # PySide6, psutil
+└── hardinfo/
+    ├── __init__.py            # версия и лёгкий run_app()
+    ├── bootstrap.py           # автодоустановка зависимостей при первом запуске
+    ├── cli.py                 # аргументы, mutex, логирование, запуск GUI/экспорт
+    ├── constants.py           # цвета, версия, имена файлов и mutex
+    ├── tweaks_db.py           # база твиков реестра
+    ├── collectors/            # сбор данных: WMI, сенсоры, GPU, спецификации
+    ├── models/                # типизированные модели HardwareProfile и др.
+    ├── formatters/            # форматирование значений и экспорт отчётов
+    ├── ui/                    # главное окно и пользовательские виджеты
+    └── utils/                 # реестр, логирование, активация, драйверы, хелперы
+```
+
+### Запуск
+
+```bash
+pip install -r requirements.txt
+python HardInfo.py
+```
+
+Дополнительно доступен экспорт отчёта без открытия окна:
+
+```bash
+python HardInfo.py --report text --output hardinfo_report.txt
+python HardInfo.py --report json --output hardinfo_report.json
+```
+
+Программный запуск из кода:
+
+```python
+from hardinfo import run_app
+
+raise SystemExit(run_app())
+```
