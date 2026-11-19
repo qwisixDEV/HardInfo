@@ -8,6 +8,7 @@ from hardinfo.models.hardware import (
     OSInfo,
     PlatformInfo,
 )
+from hardinfo.models.registry import BackupEntry, RegistryTarget, TweakResult
 
 __all__ = [
     "CPUInfo",
@@ -16,4 +17,7 @@ __all__ = [
     "MemoryInfo",
     "OSInfo",
     "PlatformInfo",
+    "BackupEntry",
+    "RegistryTarget",
+    "TweakResult",
 ]

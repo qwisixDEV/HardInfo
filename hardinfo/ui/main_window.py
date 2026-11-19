@@ -7,17 +7,21 @@ modules.
 
 import ctypes
 import logging
+import os
+import re
 import subprocess
 import sys
 
 import psutil
 import winreg
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QTimer
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QTimer, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
     QGraphicsOpacityEffect,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -69,8 +73,13 @@ from hardinfo.utils import (
     QtLoggingHandler,
     SafeRegistryBackup,
     WindowsActivationThread,
+    apply_tweak,
     clean_system_string,
+    is_admin,
+    require_admin,
 )
+
+OEM_DRIVER_PATTERN = re.compile(r"oem\d+\.inf", re.IGNORECASE)
 
 
 class HardInfoMainWindow(QMainWindow):
@@ -222,7 +231,7 @@ class HardInfoMainWindow(QMainWindow):
         right_layout.setContentsMargins(20, 20, 20, 20)
         
         self.warning_banner = AdminWarningBanner(self, self.relaunch_elevated)
-        if not ctypes.windll.shell32.IsUserAnAdmin():
+        if not is_admin():
             right_layout.addWidget(self.warning_banner)
         
         self.tabs = QStackedWidget()
@@ -258,6 +267,28 @@ class HardInfoMainWindow(QMainWindow):
         self.build_tab_start()
         
         self.switch_tab(0)
+        self.apply_admin_gate()
+
+    def apply_admin_gate(self):
+        """Disable destructive actions at startup when the process is not elevated."""
+        if is_admin():
+            return
+        locked = (
+            "btn_run_activation",
+            "btn_undo",
+            "btn_delete",
+            "btn_pnp_clean",
+            "btn_ram_purge",
+            "btn_boost_now",
+        )
+        tip_ru = "Требуются права администратора. Перезапустите HARDINFO от имени администратора."
+        tip_en = "Administrator privileges required. Restart HARDINFO as administrator."
+        for name in locked:
+            button = getattr(self, name, None)
+            if button is None:
+                continue
+            button.setEnabled(False)
+            button.setToolTip(tip_ru if self.current_lang == "ru" else tip_en)
 
     def switch_tab(self, index):
         """Переключение вкладок с плавной анимацией проявления"""
@@ -469,14 +500,14 @@ class HardInfoMainWindow(QMainWindow):
         btn_open_dev.clicked.connect(self.action_open_device_manager)
         self.register_tr(btn_open_dev, "ОТКРЫТЬ ДИСПЕТЧЕР УСТРОЙСТВ", "OPEN DEVICE MANAGER")
         
-        btn_pnp_clean = QPushButton()
-        btn_pnp_clean.setFixedHeight(40)
-        btn_pnp_clean.setStyleSheet(f"QPushButton {{ background-color: #211014; color: {COLOR_ACCENT_RED}; font-size: 11px; font-weight: bold; border: 1px solid {COLOR_ACCENT_RED}; border-radius: 4px; }} QPushButton:hover {{ background-color: #211014; color: #ffffff; }}")
-        btn_pnp_clean.clicked.connect(self.action_display_pnp_drivers)
-        self.register_tr(btn_pnp_clean, "ПОИСК OEM-ДРАЙВЕРОВ И ОТКАТ (PNPUTIL)", "SCAN OEM-DRIVERS & ROLLBACK")
-        
+        self.btn_pnp_clean = QPushButton()
+        self.btn_pnp_clean.setFixedHeight(40)
+        self.btn_pnp_clean.setStyleSheet(f"QPushButton {{ background-color: #211014; color: {COLOR_ACCENT_RED}; font-size: 11px; font-weight: bold; border: 1px solid {COLOR_ACCENT_RED}; border-radius: 4px; }} QPushButton:hover {{ background-color: #211014; color: #ffffff; }}")
+        self.btn_pnp_clean.clicked.connect(self.action_display_pnp_drivers)
+        self.register_tr(self.btn_pnp_clean, "ПОИСК OEM-ДРАЙВЕРОВ И ОТКАТ (PNPUTIL)", "SCAN OEM-DRIVERS & ROLLBACK")
+
         card_rb.main_layout.addWidget(btn_open_dev)
-        card_rb.main_layout.addWidget(btn_pnp_clean)
+        card_rb.main_layout.addWidget(self.btn_pnp_clean)
         col_right.addStretch(1)
 
     def action_update_all_drivers(self):
@@ -497,14 +528,34 @@ class HardInfoMainWindow(QMainWindow):
         self.dl_thread = DriverDownloadThread(vendor)
         self.dl_thread.progress_signal.connect(self.append_log)
         self.dl_thread.done_signal.connect(self.driver_download_finished)
+        self.dl_thread.file_ready_signal.connect(self.driver_file_ready)
         self.dl_thread.start()
 
     def driver_download_finished(self, success, msg):
         self.btn_sys.setEnabled(True)
-        if success:
-            QMessageBox.information(self, "Загрузка обновлений", msg)
-        else:
+        if not success:
             QMessageBox.critical(self, "Ошибка загрузки", f"Не удалось обойти региональный блок: {msg}")
+
+    def driver_file_ready(self, path):
+        """Offer the verified file instead of starting an unknown executable."""
+        folder = os.path.dirname(path)
+        message_ru = (
+            "Пакет загружен и проверен. HARDINFO не запускает установщики автоматически.\n\n"
+            f"Файл: {path}\n\nОткрыть папку с файлом?"
+        )
+        message_en = (
+            "The package has been downloaded and verified. HARDINFO never launches "
+            f"installers automatically.\n\nFile: {path}\n\nOpen the containing folder?"
+        )
+        message = message_ru if self.current_lang == "ru" else message_en
+        reply = QMessageBox.question(
+            self,
+            "Проверенный драйвер" if self.current_lang == "ru" else "Verified Driver",
+            message,
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
 
     def action_open_device_manager(self):
         try:
@@ -514,30 +565,85 @@ class HardInfoMainWindow(QMainWindow):
             QMessageBox.critical(self, "Ошибка", f"Не удалось открыть devmgmt.msc: {e}")
 
     def action_display_pnp_drivers(self):
+        if not require_admin(
+            self,
+            "Для удаления OEM-пакетов драйверов требуются права Администратора.",
+            "Administrator privileges are required to remove OEM driver packages.",
+        ):
+            return
+
         logging.info("[SYSTEM] Запуск сканирования хранилища OEM сторонних драйверов...")
         try:
-            res = subprocess.run("pnputil /enum-drivers", capture_output=True, shell=True, text=True, errors='ignore')
-            lines = res.stdout.split("\n")
-            oems = []
+            result = subprocess.run(
+                ["pnputil", "/enum-drivers"],
+                capture_output=True,
+                text=True,
+                errors="ignore",
+                timeout=30,
+            )
+            output = result.stdout or ""
             current_oem = ""
-            for line in lines:
-                if "Опубликованное имя" in line or "Published Name" in line:
-                    current_oem = line.split(":")[1].strip()
-                if ("Класс" in line or "Class Name" in line) and "Display" in line:
+            oems: list[str] = []
+            for line in output.splitlines():
+                match = OEM_DRIVER_PATTERN.search(line)
+                if match:
+                    current_oem = match.group(0).lower()
+                if current_oem and "display" in line.lower() and current_oem not in oems:
                     oems.append(current_oem)
-            if oems:
-                msg = "Найдены display oem-пакеты дисплейных драйверов в хранилище:\n\n" + "\n".join(oems) + "\n\nВы хотите вызвать команду принудительного отката/удаления пакета?"
-                confirm = QMessageBox.question(self, "Откат драйвера", msg, QMessageBox.Yes | QMessageBox.No)
-                if confirm == QMessageBox.Yes:
-                    target_oem, ok = QMessageBox.getText(self, "Ввод имени", "Введите имя пакета для удаления и отката (например, oem12.inf):")
-                    if ok and target_oem.strip():
-                        res_del = subprocess.run(f"pnputil /delete-driver {target_oem.strip()} /uninstall", capture_output=True, shell=True, text=True, errors='ignore')
-                        logging.info(res_del.stdout)
-                        QMessageBox.information(self, "Откат", "Команда отката/удаления отправлена в pnputil!")
-            else:
-                QMessageBox.information(self, "Сканирование", "В системном репозитории не обнаружено сторонних графических OEM-пакетов дисплея.")
-        except Exception as e:
-            logging.error(f"[ERROR] Сбой вызова pnputil: {e}")
+        except Exception as exc:
+            logging.error(f"[ERROR] Сбой вызова pnputil: {exc}")
+            QMessageBox.critical(self, "pnputil", str(exc))
+            return
+
+        if not oems:
+            QMessageBox.information(
+                self,
+                "Сканирование",
+                "В системном репозитории не обнаружено сторонних графических OEM-пакетов дисплея.",
+            )
+            return
+
+        message = (
+            "Найдены OEM-пакеты дисплейных драйверов:\n\n"
+            + "\n".join(oems)
+            + "\n\nПродолжить удаление выбранного пакета?"
+        )
+        confirm = QMessageBox.question(self, "Откат драйвера", message, QMessageBox.Yes | QMessageBox.No)
+        if confirm != QMessageBox.Yes:
+            return
+
+        target_oem, ok = QInputDialog.getText(
+            self,
+            "Ввод имени",
+            "Введите имя пакета для удаления и отката (например, oem12.inf):",
+        )
+        if not ok:
+            return
+        target_oem = target_oem.strip().lower()
+        if not OEM_DRIVER_PATTERN.fullmatch(target_oem):
+            QMessageBox.warning(
+                self,
+                "Некорректное имя пакета",
+                "Разрешено только имя вида oem12.inf (цифры и расширение .inf).",
+            )
+            return
+        if target_oem not in oems:
+            QMessageBox.warning(self, "Пакет не найден", f"Пакет {target_oem} отсутствует в списке сканирования.")
+            return
+
+        try:
+            deletion = subprocess.run(
+                ["pnputil", "/delete-driver", target_oem, "/uninstall"],
+                capture_output=True,
+                text=True,
+                errors="ignore",
+                timeout=60,
+            )
+            logging.info("[SYSTEM] pnputil: %s", (deletion.stdout or "").strip())
+            QMessageBox.information(self, "Откат", "Команда отката/удаления отправлена в pnputil!")
+        except Exception as exc:
+            logging.error("[ERROR] Сбой удаления драйвера: %s", exc)
+            QMessageBox.critical(self, "Ошибка отката", str(exc))
 
     # --- ИГРОВОЙ ОПТИМИЗАТОР С КАТЕГОРИЗАЦИЕЙ ТВКОВ ПО ПРОФИЛЯМ ---
     def build_tab_boost(self):
@@ -637,32 +743,32 @@ class HardInfoMainWindow(QMainWindow):
         form.addWidget(lbl_game)
         form.addWidget(self.edit_game_process)
         
-        btn_boost_now = QPushButton()
-        btn_boost_now.setFixedHeight(35)
-        btn_boost_now.setStyleSheet(f"QPushButton {{ background-color: #0b2212; color: {COLOR_ACCENT_GREEN}; font-size: 11px; font-weight: bold; border: 1px solid {COLOR_ACCENT_GREEN}; border-radius: 4px; }} QPushButton:hover {{ background-color: {COLOR_ACCENT_GREEN}; color: #000000; }}")
-        btn_boost_now.clicked.connect(self.run_game_boost_optimization)
-        self.register_tr(btn_boost_now, "УСКОРИТЬ ИГРУ", "BOOST CORE GAMEPLAY")
-        
-        btn_ram_purge = QPushButton()
-        btn_ram_purge.setFixedHeight(35)
-        btn_ram_purge.setStyleSheet(f"QPushButton {{ background-color: #121d22; color: {COLOR_ACCENT_TEAL}; font-size: 11px; font-weight: bold; border: 1px solid {COLOR_ACCENT_TEAL}; border-radius: 4px; }} QPushButton:hover {{ background-color: {COLOR_ACCENT_TEAL}; color: #000000; }}")
-        btn_ram_purge.clicked.connect(self.run_ram_standby_flush)
-        self.register_tr(btn_ram_purge, "Очистить ОЗУ", "Empty Cache RAM")
-        
+        self.btn_boost_now = QPushButton()
+        self.btn_boost_now.setFixedHeight(35)
+        self.btn_boost_now.setStyleSheet(f"QPushButton {{ background-color: #0b2212; color: {COLOR_ACCENT_GREEN}; font-size: 11px; font-weight: bold; border: 1px solid {COLOR_ACCENT_GREEN}; border-radius: 4px; }} QPushButton:hover {{ background-color: {COLOR_ACCENT_GREEN}; color: #000000; }}")
+        self.btn_boost_now.clicked.connect(self.run_game_boost_optimization)
+        self.register_tr(self.btn_boost_now, "УСКОРИТЬ ИГРУ", "BOOST CORE GAMEPLAY")
+
+        self.btn_ram_purge = QPushButton()
+        self.btn_ram_purge.setFixedHeight(35)
+        self.btn_ram_purge.setStyleSheet(f"QPushButton {{ background-color: #121d22; color: {COLOR_ACCENT_TEAL}; font-size: 11px; font-weight: bold; border: 1px solid {COLOR_ACCENT_TEAL}; border-radius: 4px; }} QPushButton:hover {{ background-color: {COLOR_ACCENT_TEAL}; color: #000000; }}")
+        self.btn_ram_purge.clicked.connect(self.run_ram_standby_flush)
+        self.register_tr(self.btn_ram_purge, "Очистить ОЗУ", "Empty Cache RAM")
+
         lay_btns = QHBoxLayout()
-        lay_btns.addWidget(btn_boost_now)
-        lay_btns.addWidget(btn_ram_purge)
-        
-        btn_undo = QPushButton()
-        btn_undo.setFixedHeight(35)
-        btn_undo.setStyleSheet(f"QPushButton {{ background-color: #211014; color: {COLOR_ACCENT_RED}; font-size: 11px; font-weight: bold; border: 1px solid {COLOR_ACCENT_RED}; border-radius: 4px; }} QPushButton:hover {{ background-color: {COLOR_ACCENT_RED}; color: #ffffff; }}")
-        btn_undo.clicked.connect(self.run_safe_undo)
-        self.register_tr(btn_undo, "ОТКАТИТЬ ВСЕ ИЗМЕНЕНИЯ (SAFE UNDO)", "ROLLBACK SYSTEM (SAFE UNDO)")
-        
+        lay_btns.addWidget(self.btn_boost_now)
+        lay_btns.addWidget(self.btn_ram_purge)
+
+        self.btn_undo = QPushButton()
+        self.btn_undo.setFixedHeight(35)
+        self.btn_undo.setStyleSheet(f"QPushButton {{ background-color: #211014; color: {COLOR_ACCENT_RED}; font-size: 11px; font-weight: bold; border: 1px solid {COLOR_ACCENT_RED}; border-radius: 4px; }} QPushButton:hover {{ background-color: {COLOR_ACCENT_RED}; color: #ffffff; }}")
+        self.btn_undo.clicked.connect(self.run_safe_undo)
+        self.register_tr(self.btn_undo, "ОТКАТИТЬ ВСЕ ИЗМЕНЕНИЯ (SAFE UNDO)", "ROLLBACK SYSTEM (SAFE UNDO)")
+
         card_boost.main_layout.addWidget(lbl_info_b)
         card_boost.main_layout.addLayout(form)
         card_boost.main_layout.addLayout(lay_btns)
-        card_boost.main_layout.addWidget(btn_undo)
+        card_boost.main_layout.addWidget(self.btn_undo)
         
         right_panel.addWidget(card_boost)
         right_panel.addStretch()
@@ -690,12 +796,12 @@ class HardInfoMainWindow(QMainWindow):
         self.list_startup.setStyleSheet(f"QListWidget {{ background-color: #050506; color: {COLOR_TEXT_PR}; border: 1px solid {COLOR_BORDER}; border-radius: 6px; padding: 10px; font-size: 12px; }} QListWidget::item {{ padding: 8px; border-bottom: 1px solid #121214; }} QListWidget::item:selected {{ background-color: {COLOR_ACCENT_TEAL}; color: #000000; }}")
         card_start.main_layout.addWidget(self.list_startup)
         
-        btn_delete = QPushButton()
-        btn_delete.setFixedHeight(40)
-        btn_delete.setStyleSheet(f"QPushButton {{ background-color: #211014; color: {COLOR_ACCENT_RED}; font-size: 11px; font-weight: bold; border: 1px solid {COLOR_ACCENT_RED}; border-radius: 6px; }} QPushButton:hover {{ background-color: {COLOR_ACCENT_RED}; color: #ffffff; }}")
-        btn_delete.clicked.connect(self.delete_startup_item)
-        self.register_tr(btn_delete, "Удалить выбранную запись", "Delete Selected Registry Item")
-        card_start.main_layout.addWidget(btn_delete)
+        self.btn_delete = QPushButton()
+        self.btn_delete.setFixedHeight(40)
+        self.btn_delete.setStyleSheet(f"QPushButton {{ background-color: #211014; color: {COLOR_ACCENT_RED}; font-size: 11px; font-weight: bold; border: 1px solid {COLOR_ACCENT_RED}; border-radius: 6px; }} QPushButton:hover {{ background-color: {COLOR_ACCENT_RED}; color: #ffffff; }}")
+        self.btn_delete.clicked.connect(self.delete_startup_item)
+        self.register_tr(self.btn_delete, "Удалить выбранную запись", "Delete Selected Registry Item")
+        card_start.main_layout.addWidget(self.btn_delete)
 
     # --- СВЯЗУЮЩИЕ ИСПРАВЛЕННЫЕ ОПЕРАЦИИ ---
     def load_tweaks_states(self):
@@ -721,44 +827,25 @@ class HardInfoMainWindow(QMainWindow):
             chk.blockSignals(False)
 
     def action_toggle_tweak(self):
-        if not ctypes.windll.shell32.IsUserAnAdmin():
-            QMessageBox.warning(self, "Права администратора" if self.current_lang == "ru" else "Admin Privileges", 
-                                "Для изменения твиков реестра требуются привилегии Администратора." if self.current_lang == "ru" else "Administrator privileges are required to apply registry tweaks.")
-            self.load_tweaks_states()
-            return
-            
         chk = self.sender()
         key = chk.property("tweak_id")
         t_info = TWEAKS_DB[key]
         state = chk.isChecked()
-        
-        for hive_name, path, val_name, expected_type, val_data in t_info["reg"]:
-            hive = winreg.HKEY_CURRENT_USER if hive_name == "HKCU" else winreg.HKEY_LOCAL_MACHINE
-            if state:
-                SafeRegistryBackup.backup_value(hive_name, path, val_name, expected_type)
-                try:
-                    reg_key = winreg.CreateKeyEx(hive, path, 0, winreg.KEY_SET_VALUE)
-                except Exception:
-                    reg_key = winreg.OpenKey(hive, path, 0, winreg.KEY_SET_VALUE)
-                with reg_key:
-                    winreg.SetValueEx(reg_key, val_name, 0, expected_type, val_data)
-            else:
-                backup_data = SafeRegistryBackup.load_backup()
-                key_str = f"{hive_name}\\{path}\\{val_name}"
-                if key_str in backup_data:
-                    orig_val = backup_data[key_str]["value"]
-                    orig_type = backup_data[key_str]["type"]
-                    try:
-                        if orig_val == "__missing__":
-                            with winreg.OpenKey(hive, path, 0, winreg.KEY_SET_VALUE) as r_k:
-                                winreg.DeleteValue(r_k, val_name)
-                        else:
-                            with winreg.OpenKey(hive, path, 0, winreg.KEY_SET_VALUE) as r_k:
-                                winreg.SetValueEx(r_k, val_name, 0, orig_type, orig_val)
-                    except Exception:
-                        pass
-                        
-        logging.info(f"[SYSTEM] Изменено состояние твика '{t_info['title']}': {'ВКЛ' if state else 'ВЫКЛ'}")
+
+        if not require_admin(
+            self,
+            "Для изменения твиков реестра требуются привилегии Администратора.",
+            "Administrator privileges are required to apply registry tweaks.",
+        ):
+            self.load_tweaks_states()
+            return
+
+        plan = SafeRegistryBackup.plan_tweak(key)
+        logging.info("[SYSTEM] План твика '%s': %s", t_info["title"], "; ".join(plan))
+        result = apply_tweak(key, state)
+        logging.info("[SYSTEM] %s", result.message)
+        if not result.ok:
+            QMessageBox.warning(self, "Твик реестра", result.message)
         self.load_tweaks_states()
 
     def detect_windows_edition(self):
@@ -771,21 +858,30 @@ class HardInfoMainWindow(QMainWindow):
             self.lbl_act_status.setText("Редакция ОС: Не определена" if self.current_lang == "ru" else "OS Edition: Undetected")
 
     def run_kms_activation(self):
-        if not ctypes.windll.shell32.IsUserAnAdmin():
-            QMessageBox.warning(self, "Права администратора" if self.current_lang == "ru" else "Admin Privileges", 
-                                "Для активации Windows требуются права Администратора." if self.current_lang == "ru" else "Administrator privileges are required to activate Windows.")
+        if not require_admin(
+            self,
+            "Для активации Windows требуются права Администратора.",
+            "Administrator privileges are required to activate Windows.",
+        ):
             return
-            
+
         # Интеллектуальное предупреждение о наличии ОФИЦИАЛЬНОЙ лицензии
         if self.is_already_licensed:
             reply = QMessageBox.warning(
                 self,
                 "Внимание" if self.current_lang == "ru" else "Warning",
                 "Ваша Windows уже активирована оригинальной цифровой лицензией!\n\n"
-                "Запуск KMS сотрет официальную вечную лицензию и заменит её на временную.\n\n"
+                "ВНИМАНИЕ: запуск KMS ЗАМЕНИТ официальную вечную лицензию на временную "
+                "(180 дней) и подключит сторонний сервер активации. Это изменение "
+                "необратимо для цифровой лицензии и может нарушить "
+                "условия лицензионного соглашения.\n\n"
+                "Продолжая, вы подтверждаете, что осознанно идёте на этот риск.\n\n"
                 "Вы уверены, что хотите продолжить?" if self.current_lang == "ru" else
                 "Your Windows is already activated with a GENUINE digital license!\n\n"
-                "KMS will erase your permanent license and replace it with a temporary one.\n\n"
+                "WARNING: KMS will REPLACE your permanent license with a temporary one "
+                "(180 days) and connect to a third-party activation server. This is not "
+                "reversible for your digital license and may violate the license terms.\n\n"
+                "By continuing you confirm that you accept this risk.\n\n"
                 "Are you sure you want to proceed?",
                 QMessageBox.Yes | QMessageBox.No
             )
@@ -842,6 +938,12 @@ class HardInfoMainWindow(QMainWindow):
             pass
 
     def run_ram_standby_flush(self):
+        if not require_admin(
+            self,
+            "Для очистки системного кэша памяти требуются права Администратора.",
+            "Administrator privileges are required to purge the system memory cache.",
+        ):
+            return
         logging.info("[SYSTEM] Запущена принудительная очистка оперативной памяти...")
         try:
             class LUID(ctypes.Structure):
@@ -879,6 +981,12 @@ class HardInfoMainWindow(QMainWindow):
             logging.error(f"[ERROR] Не удалось очистить ОЗУ: {e}")
 
     def run_game_boost_optimization(self):
+        if not require_admin(
+            self,
+            "Для изменения приоритетов процессов и схемы питания требуются права Администратора.",
+            "Administrator privileges are required to change process priorities and the power plan.",
+        ):
+            return
         game_name = self.edit_game_process.text().strip().lower()
         if not game_name:
             QMessageBox.warning(self, "Игровой Оптимизатор" if self.current_lang == "ru" else "Game Optimizer", 
@@ -925,6 +1033,12 @@ class HardInfoMainWindow(QMainWindow):
         QMessageBox.information(self, "Оптимизация игр" if self.current_lang == "ru" else "Game Booster", msg)
 
     def run_safe_undo(self):
+        if not require_admin(
+            self,
+            "Для отката системных изменений требуются права Администратора.",
+            "Administrator privileges are required to roll back system changes.",
+        ):
+            return
         logging.info("[SYSTEM] Инициирован полный откат системных твиков и электропитания...")
         
         if self.original_power_plan:
@@ -969,11 +1083,13 @@ class HardInfoMainWindow(QMainWindow):
                 pass
 
     def delete_startup_item(self):
-        if not ctypes.windll.shell32.IsUserAnAdmin():
-            QMessageBox.warning(self, "Права администратора" if self.current_lang == "ru" else "Admin Privileges", 
-                                "Для удаления записей автозапуска требуются права Администратора." if self.current_lang == "ru" else "Administrator privileges are required to modify startup.")
+        if not require_admin(
+            self,
+            "Для удаления записей автозапуска требуются права Администратора.",
+            "Administrator privileges are required to modify startup.",
+        ):
             return
-            
+
         selected_item = self.list_startup.currentItem()
         if not selected_item:
             QMessageBox.warning(self, "Автозапуск" if self.current_lang == "ru" else "Startup", 
